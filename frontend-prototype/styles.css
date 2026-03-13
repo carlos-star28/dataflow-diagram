@@ -288,11 +288,13 @@ body:not(.flow-only) .layout.centered {
 }
 
 .import-meta-status.complete {
-  background: rgba(146, 231, 164, 0.35);
+  background: rgba(28, 128, 72, 0.72);
+  color: #e8fff2;
 }
 
 .import-meta-status.incomplete {
-  background: rgba(255, 236, 157, 0.55);
+  background: rgba(176, 44, 44, 0.78);
+  color: #fff1f1;
 }
 
 .import-meta-logic {
@@ -327,7 +329,7 @@ body:not(.flow-only) .layout.centered {
 }
 
 .import-map-table tr.mapped-row td {
-  background: rgba(120, 220, 160, 0.18);
+  background: rgba(72, 168, 118, 0.28);
 }
 
 .import-actions {

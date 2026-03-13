@@ -1805,14 +1805,19 @@
   function renderMappingProgressMeta() {
     if (!activeImportTable) return;
 
-    const total = importMapBody.querySelectorAll("tr").length;
+    const rows = [...importMapBody.querySelectorAll("tr")];
+    const total = rows.length;
     if (!total) return;
 
-    const mapped = [...importMapBody.querySelectorAll("tr select")].filter((node) => Boolean(node.value)).length;
+    const mapped = rows.reduce((count, row) => {
+      const select = row.querySelector("select");
+      const value = String(select?.value || "").trim();
+      return count + (value ? 1 : 0);
+    }, 0);
     const unmapped = Math.max(0, total - mapped);
     const isComplete = unmapped === 0;
     const statusText = isComplete
-      ? `映射：${mapped}个字段全满足`
+      ? `映射：${mapped}/${total} 字段已满足`
       : `映射：${unmapped}个字段未映射`;
     const logicText = logicRuleDesc[activeImportTable] || "";
 
