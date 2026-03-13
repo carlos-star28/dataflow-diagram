@@ -228,18 +228,26 @@ def ensure_bw_object_name_schema() -> None:
             cur.execute("SHOW KEYS FROM `bw_object_name` WHERE Key_name = 'PRIMARY'")
             pk_rows = cur.fetchall()
             pk_cols = [r[4] for r in pk_rows]
+            can_relax_sourcesys = True
             if "SOURCESYS" in pk_cols:
-                cur.execute("ALTER TABLE `bw_object_name` DROP PRIMARY KEY")
+                try:
+                    cur.execute("ALTER TABLE `bw_object_name` DROP PRIMARY KEY")
+                except mysql.connector.Error as exc:
+                    # TiDB clustered index can reject DROP PRIMARY KEY (e.g. error 8200).
+                    # In that case keep existing schema and avoid blocking API startup.
+                    print(f"[startup] Skip bw_object_name PK migration on current DB engine: {exc}")
+                    can_relax_sourcesys = False
 
-            escaped_comment = str(column_comment or "").replace("'", "''")
-            comment_sql = f" COMMENT '{escaped_comment}'" if column_comment is not None else ""
-            cur.execute(f"ALTER TABLE `bw_object_name` MODIFY COLUMN `SOURCESYS` {column_type} NULL{comment_sql}")
+            if can_relax_sourcesys:
+                escaped_comment = str(column_comment or "").replace("'", "''")
+                comment_sql = f" COMMENT '{escaped_comment}'" if column_comment is not None else ""
+                cur.execute(f"ALTER TABLE `bw_object_name` MODIFY COLUMN `SOURCESYS` {column_type} NULL{comment_sql}")
 
-            cur.execute("SHOW INDEX FROM `bw_object_name` WHERE Key_name = 'idx_bw_object_lookup'")
-            if not cur.fetchall():
-                cur.execute(
-                    "CREATE INDEX `idx_bw_object_lookup` ON `bw_object_name` (`BW_OBJECT`, `BW_OBJECT_TYPE`, `SOURCESYS`)"
-                )
+                cur.execute("SHOW INDEX FROM `bw_object_name` WHERE Key_name = 'idx_bw_object_lookup'")
+                if not cur.fetchall():
+                    cur.execute(
+                        "CREATE INDEX `idx_bw_object_lookup` ON `bw_object_name` (`BW_OBJECT`, `BW_OBJECT_TYPE`, `SOURCESYS`)"
+                    )
 
         conn.commit()
     finally:
