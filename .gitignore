@@ -12,3 +12,8 @@ __pycache__/
 *.csv
 .~*
 .vscode/
+
+# Keep all ad-hoc spreadsheets ignored, but include schema templates required by startup scripts.
+!Table-Template/
+!Table-Template/table_definition_rstran.xlsx
+!Table-Template/table_definition_bw_object_name.xlsx
