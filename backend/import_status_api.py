@@ -2117,10 +2117,12 @@ def execute_import(
     # Normalize empty-like values to SQL NULL and trim text safely.
     mapped_df = mapped_df.apply(lambda col: col.map(normalize_cell))
 
-    # Compatibility guard: some deployed DBs still keep bw_object_name.SOURCESYS as NOT NULL.
-    # Keep logical "empty source" as empty string to avoid 1048 errors on those schemas.
-    if table_name == "bw_object_name" and "SOURCESYS" in mapped_df.columns:
-        mapped_df["SOURCESYS"] = mapped_df["SOURCESYS"].fillna("")
+    # Compatibility guard: mixed deployed schemas may still keep these columns as NOT NULL.
+    # Business rule allows them to be empty, so serialize empty-like values as empty string.
+    if table_name == "bw_object_name":
+        for nullable_col in ("SOURCESYS", "OBJECT_NAME"):
+            if nullable_col in mapped_df.columns:
+                mapped_df[nullable_col] = mapped_df[nullable_col].fillna("")
 
     for col in db_columns:
         max_len = col_lens.get(col)
@@ -2218,7 +2220,10 @@ def execute_import(
         if exc.errno == 1062:
             detail = "导入失败：检测到重复键值数据。已回滚到导入前数据，请去重后重新导入。"
         elif exc.errno == 1048:
-            detail = "导入失败：键字段存在空值（如 SOURCESYS）。请修正源数据后重试。"
+            exc_text = str(exc)
+            col_match = re.search(r"Column\s+'([^']+)'\s+cannot\s+be\s+null", exc_text, flags=re.IGNORECASE)
+            col_name = col_match.group(1) if col_match else "未知字段"
+            detail = f"导入失败：字段 {col_name} 不能为 NULL（当前数据库表结构限制）。请检查表结构或改为空字符串后重试。"
         raise HTTPException(status_code=400, detail=detail) from exc
     finally:
         cur.close()
