@@ -231,7 +231,8 @@ def ensure_bw_object_name_schema() -> None:
             if "SOURCESYS" in pk_cols:
                 cur.execute("ALTER TABLE `bw_object_name` DROP PRIMARY KEY")
 
-            comment_sql = f" COMMENT '{str(column_comment or '').replace("'", "''")}'" if column_comment is not None else ""
+            escaped_comment = str(column_comment or "").replace("'", "''")
+            comment_sql = f" COMMENT '{escaped_comment}'" if column_comment is not None else ""
             cur.execute(f"ALTER TABLE `bw_object_name` MODIFY COLUMN `SOURCESYS` {column_type} NULL{comment_sql}")
 
             cur.execute("SHOW INDEX FROM `bw_object_name` WHERE Key_name = 'idx_bw_object_lookup'")
