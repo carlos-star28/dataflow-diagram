@@ -2117,6 +2117,11 @@ def execute_import(
     # Normalize empty-like values to SQL NULL and trim text safely.
     mapped_df = mapped_df.apply(lambda col: col.map(normalize_cell))
 
+    # Compatibility guard: some deployed DBs still keep bw_object_name.SOURCESYS as NOT NULL.
+    # Keep logical "empty source" as empty string to avoid 1048 errors on those schemas.
+    if table_name == "bw_object_name" and "SOURCESYS" in mapped_df.columns:
+        mapped_df["SOURCESYS"] = mapped_df["SOURCESYS"].fillna("")
+
     for col in db_columns:
         max_len = col_lens.get(col)
         mapped_df[col] = mapped_df[col].map(lambda v: clamp_to_length(v, max_len))
