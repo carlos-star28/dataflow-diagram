@@ -195,6 +195,11 @@
     return message;
   }
 
+  function isUnauthorizedError(error) {
+    const message = String(error?.message || "");
+    return /(?:^|\b)status 401\b|unauthorized|未登录|未认证|会话已过期/i.test(message);
+  }
+
   function setSelectedStartContext(id = "", source = "", type = "") {
     selectedStartContext = {
       id: String(id || "").trim(),
@@ -525,9 +530,13 @@
       resultDropdown.innerHTML = buildDropdownWithMore(rows.join(""), "moreLink");
       resultDropdown.classList.remove("hidden");
       historyDropdown.classList.add("hidden");
-    } catch {
+    } catch (error) {
       if (token !== searchRequestToken) return;
-      resultDropdown.innerHTML = buildDropdownWithMore('<div class="dropdown-item">加载失败，请确认后端服务已启动</div>', "moreLink");
+      if (isUnauthorizedError(error)) {
+        resultDropdown.innerHTML = buildDropdownWithMore('<div class="dropdown-item">请先登录后再搜索</div>', "moreLink");
+      } else {
+        resultDropdown.innerHTML = buildDropdownWithMore('<div class="dropdown-item">加载失败，请确认后端服务已启动</div>', "moreLink");
+      }
       resultDropdown.classList.remove("hidden");
       historyDropdown.classList.add("hidden");
     }
@@ -855,6 +864,10 @@
     } catch (error) {
       if (String(error?.message || "") === "request_timeout") {
         moreTableBody.innerHTML = '<tr><td colspan="4">请求超时，请稍后重试或检查后端状态</td></tr>';
+        return;
+      }
+      if (isUnauthorizedError(error)) {
+        moreTableBody.innerHTML = '<tr><td colspan="4">请先登录后再查找</td></tr>';
         return;
       }
       moreTableBody.innerHTML = '<tr><td colspan="4">加载失败，请确认后端服务已启动</td></tr>';
@@ -1294,7 +1307,7 @@
         if (loginUsername) loginUsername.value = "";
         if (loginPassword) loginPassword.value = "";
         setLoginError("");
-        hideLoginGate();
+        showLoginGate();
       });
     }
 
