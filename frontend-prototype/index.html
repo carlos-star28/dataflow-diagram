@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>数据流查看工具 - Frontend Prototype</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="theme-dark">
+  <div class="bg-layer" aria-hidden="true">
+    <canvas id="bgCanvas"></canvas>
+    <div class="bg-glow glow-a"></div>
+    <div class="bg-glow glow-b"></div>
+  </div>
+
+  <div class="page-shell">
+    <header class="topbar">
+      <h1 class="title-with-icon">
+        <span class="title-icon app-title-icon" aria-hidden="true">
+          <svg viewBox="0 0 96 56" focusable="false" aria-hidden="true">
+            <defs>
+              <linearGradient id="appNodeBlue" x1="0" x2="1" y1="0" y2="1">
+                <stop offset="0%" stop-color="#79b8ff" />
+                <stop offset="100%" stop-color="#4d80ff" />
+              </linearGradient>
+              <linearGradient id="appNodeGreen" x1="0" x2="1" y1="0" y2="1">
+                <stop offset="0%" stop-color="#6ce4cf" />
+                <stop offset="100%" stop-color="#2fbf8f" />
+              </linearGradient>
+            </defs>
+            <rect x="4" y="4" width="36" height="14" rx="7" fill="url(#appNodeBlue)" stroke="#c7e6ff" stroke-width="1.2" />
+            <rect x="56" y="4" width="36" height="14" rx="7" fill="url(#appNodeBlue)" stroke="#c7e6ff" stroke-width="1.2" />
+            <rect x="30" y="36" width="36" height="14" rx="7" fill="url(#appNodeGreen)" stroke="#c6ffe7" stroke-width="1.2" />
+            <path d="M22 18 L48 36 L74 18" fill="none" stroke="#76b8ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            <circle cx="18" cy="11" r="2" fill="#f3d18b" />
+            <circle cx="74" cy="11" r="2" fill="#90d7ff" />
+            <circle cx="48" cy="43" r="2" fill="#9df6cc" />
+          </svg>
+        </span>
+        <span>数据流查看工具</span>
+        <span id="appVersionBadge" class="app-version-badge">v1.0</span>
+      </h1>
+      <div class="topbar-actions">
+        <button id="userMenuBtn" class="glass-btn text-btn hidden" type="button">用户</button>
+        <div id="userMenuPanel" class="user-menu-panel hidden">
+          <div id="userMenuWho" class="user-menu-who">--</div>
+          <button id="changePasswordBtn" class="user-menu-item" type="button">修改密码</button>
+          <button id="openUserAdminBtn" class="user-menu-item hidden" type="button">用户管理</button>
+          <button id="logoutBtn" class="user-menu-item" type="button">退出登录</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout centered">
+    <section class="left-controls glass-panel">
+      <div class="search-row">
+        <div class="search-stack">
+          <div class="search-wrap">
+            <span class="icon">⌕</span>
+            <input id="searchInput" type="text" placeholder="Search, at least 3 chars" autocomplete="off" />
+            <span id="selectedContextMeta" class="selected-context-meta hidden" aria-live="polite"></span>
+            <button id="clearSearch" class="icon-btn" type="button" title="清除">✕</button>
+          </div>
+          <div id="historyDropdown" class="dropdown glass-panel hidden"></div>
+          <div id="resultDropdown" class="dropdown glass-panel hidden"></div>
+        </div>
+        <button id="runFlow" class="glass-btn strong" type="button">生成数据流图</button>
+      </div>
+
+      <div class="control-grid">
+        <div class="control-box">
+          <h2 class="title-with-icon">
+            <span class="title-icon mode-title-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path fill="#c8e6ff" d="M13.9 2.2l.5 2a7.9 7.9 0 011.8.8l1.8-1.1 1.9 1.9-1.1 1.8c.3.6.6 1.2.8 1.8l2 .5v2.7l-2 .5a8 8 0 01-.8 1.8l1.1 1.8-1.9 1.9-1.8-1.1c-.6.3-1.2.6-1.8.8l-.5 2h-2.7l-.5-2a8 8 0 01-1.8-.8l-1.8 1.1-1.9-1.9 1.1-1.8a8 8 0 01-.8-1.8l-2-.5V9.4l2-.5c.2-.6.5-1.2.8-1.8L4.2 5.3l1.9-1.9 1.8 1.1c.6-.3 1.2-.6 1.8-.8l.5-2h2.7z"/>
+                <circle cx="12" cy="12" r="3.3" fill="#274e80"/>
+              </svg>
+            </span>
+            <span>数据流图展开模式</span>
+          </h2>
+          <div class="mode-layout">
+            <div class="glass-inner control-inner mode-options">
+              <div class="radio-group" id="modeGroup">
+                <label class="glass-radio"><input type="radio" name="mode" value="upstream" /><span>1. 向上追溯</span></label>
+                <label class="glass-radio"><input type="radio" name="mode" value="downstream" /><span>2. 向下追溯</span></label>
+                <label class="glass-radio"><input type="radio" name="mode" value="both" checked /><span>3. 向上+向下</span></label>
+                <label class="glass-radio"><input type="radio" name="mode" value="full" /><span>4. 全量数据流</span></label>
+              </div>
+            </div>
+
+            <article class="guide mode-guide">
+              <h3>使用说明</h3>
+              <p>1. 向上追溯：从当前对象向数据上游展开</p>
+              <p>2. 向下追溯：从当前对象向数据源方向展开</p>
+              <p>3. 向上+向下：数据流1+数据流2</p>
+              <p>4. 全量数据流：向上+向下+所有节点关联的数据流</p>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    </main>
+
+    <section class="import-home-section">
+      <h2 class="title-with-icon">
+        <span class="title-icon excel-file-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+            <rect x="1" y="1" width="22" height="22" rx="5" fill="#1f9f63" />
+            <path d="M7.2 6.4h3.4l2.4 3 2.4-3h3.4l-4.1 5.3 4.3 5.9h-3.5l-2.5-3.4-2.6 3.4H7l4.2-5.7z" fill="#ffffff" />
+          </svg>
+        </span>
+        <span>Excel 导入</span>
+      </h2>
+      <div class="import-card-grid">
+        <button id="importRstranCard" class="import-card glass-panel" type="button">
+          <span class="import-card-title">导入转换数据</span>
+          <span class="import-card-sub">来源：BW表RSTRAN</span>
+          <span class="import-card-time">更新时间：<span id="importRstranTime">--</span> | 数据条目：<span id="importRstranCount">0</span></span>
+        </button>
+        <button id="importBwObjectCard" class="import-card glass-panel" type="button">
+          <span class="import-card-title">导入对象名称</span>
+          <span class="import-card-sub">导入BW对象技术名、对象类型、源系统、名称</span>
+          <span class="import-card-time">更新时间：<span id="importBwObjectTime">--</span> | 数据条目：<span id="importBwObjectCount">0</span></span>
+        </button>
+      </div>
+    </section>
+  </div>
+
+  <section id="importModal" class="import-modal hidden">
+    <div class="import-shell glass-panel">
+      <div class="import-head">
+        <h2 id="importModalTitle">字段映射</h2>
+        <div class="window-controls">
+          <button id="maxImportModal" class="glass-btn tiny more-window-btn more-window-btn-max" type="button" aria-label="最大化/还原" title="最大化"></button>
+          <button id="closeImportModal" class="glass-btn tiny more-window-btn more-window-btn-close" type="button" aria-label="关闭" title="关闭"></button>
+        </div>
+      </div>
+
+      <div class="import-tools">
+        <input id="importFileInput" type="file" accept=".xlsx,.xls,.csv" />
+        <select id="importSheetSelect" title="选择Sheet" disabled>
+          <option value="">Sheet页</option>
+        </select>
+        <button id="autoMapBtn" class="glass-btn" type="button">自动映射</button>
+      </div>
+
+      <div class="import-meta" id="importMeta">请选择 Excel 文件后开始字段映射。</div>
+
+      <div class="import-table-wrap">
+        <table class="import-map-table">
+          <thead>
+            <tr>
+              <th>数据库字段</th>
+              <th>Excel字段</th>
+            </tr>
+          </thead>
+          <tbody id="importMapBody"></tbody>
+        </table>
+      </div>
+
+      <div class="import-actions">
+        <button id="clearAllTableDataBtn" class="glass-btn" type="button">删除全部库表数据</button>
+        <button id="confirmImportBtn" class="glass-btn strong" type="button">开始导入</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="morePage" class="more-page hidden">
+    <div id="moreShell" class="more-shell glass-panel">
+      <div class="more-head">
+        <h2>搜索更多</h2>
+        <div class="window-controls">
+          <button id="maxMore" class="glass-btn tiny more-window-btn more-window-btn-max" type="button" aria-label="最大化/还原" title="最大化"></button>
+          <button id="closeMore" class="glass-btn tiny more-window-btn more-window-btn-close" type="button" aria-label="关闭" title="关闭"></button>
+        </div>
+      </div>
+      <div class="more-search">
+        <input id="moreSearchInput" type="text" placeholder="输入对象关键词" />
+        <button id="moreSearchBtn" class="glass-btn" type="button">查找</button>
+        <button id="moreFlowBtn" class="glass-btn strong" type="button">确定</button>
+      </div>
+      <div class="more-table-wrap">
+        <table id="moreTable" class="more-table">
+          <colgroup id="moreColGroup">
+            <col class="col-type" />
+            <col class="col-tech" />
+            <col class="col-source" />
+            <col class="col-desc" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>
+                <span>类型</span>
+                <span class="col-resizer" data-col="0" title="拖动调整列宽"></span>
+              </th>
+              <th>
+                <span>技术名</span>
+                <span class="col-resizer" data-col="1" title="拖动调整列宽"></span>
+              </th>
+              <th>
+                <span>源系统</span>
+                <span class="col-resizer" data-col="2" title="拖动调整列宽"></span>
+              </th>
+              <th><span>描述</span></th>
+            </tr>
+          </thead>
+          <tbody id="moreTableBody"></tbody>
+        </table>
+      </div>
+      <div id="moreResizeHandle" class="more-resize-handle" title="拖动调整窗口大小" aria-hidden="true"></div>
+    </div>
+  </section>
+
+  <section id="loginGate" class="login-gate hidden">
+    <div class="login-shell glass-panel">
+      <h2>Dataflow App</h2>
+      <div class="login-form-row">
+        <label for="loginUsername">用户名</label>
+        <input id="loginUsername" type="text" autocomplete="username" />
+      </div>
+      <div class="login-form-row">
+        <label for="loginPassword">密码</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" />
+      </div>
+      <div id="loginErrorText" class="login-error-text hidden"></div>
+      <div class="login-actions">
+        <button id="loginSubmitBtn" class="glass-btn strong" type="button">登录</button>
+        <button id="loginCancelBtn" class="glass-btn" type="button">取消登录</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="changePasswordModal" class="import-modal hidden">
+    <div class="import-shell glass-panel" style="width:min(560px,92vw);height:auto;grid-template-rows:auto auto auto;">
+      <div class="import-head">
+        <h2>修改密码</h2>
+        <div class="window-controls">
+          <button id="maxChangePasswordModal" class="glass-btn tiny more-window-btn more-window-btn-max" type="button" aria-label="最大化/还原" title="最大化"></button>
+          <button id="closeChangePasswordModal" class="glass-btn tiny more-window-btn more-window-btn-close" type="button" aria-label="关闭" title="关闭"></button>
+        </div>
+      </div>
+      <div class="import-tools create-user-tools" style="display:grid;grid-template-columns:1fr;gap:8px;">
+        <input id="currentPasswordInput" type="password" placeholder="当前密码" autocomplete="current-password" />
+        <input id="newPasswordInput" type="password" placeholder="新密码" autocomplete="new-password" />
+      </div>
+      <div class="import-actions">
+        <button id="submitChangePasswordBtn" class="glass-btn strong" type="button">提交修改</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="userAdminModal" class="import-modal hidden">
+    <div class="import-shell glass-panel" style="width:min(860px,94vw);height:min(80vh,680px);grid-template-rows:auto auto 1fr auto;">
+      <div class="import-head">
+        <h2>用户管理</h2>
+        <div class="window-controls">
+          <button id="maxUserAdminModal" class="glass-btn tiny more-window-btn more-window-btn-max" type="button" aria-label="最大化/还原" title="最大化"></button>
+          <button id="closeUserAdminModal" class="glass-btn tiny more-window-btn more-window-btn-close" type="button" aria-label="关闭" title="关闭"></button>
+        </div>
+      </div>
+      <div class="import-tools" style="display:flex;justify-content:flex-end;gap:8px;">
+        <button id="createUserBtn" class="glass-btn" type="button">新增用户</button>
+      </div>
+      <div class="import-table-wrap">
+        <table class="import-map-table">
+          <thead>
+            <tr>
+              <th>用户名</th>
+              <th>角色</th>
+              <th>状态</th>
+              <th>最近登录</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="userAdminTableBody"></tbody>
+        </table>
+      </div>
+      <div class="import-actions">
+        <button id="refreshUsersBtn" class="glass-btn" type="button">刷新列表</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="createUserModal" class="import-modal hidden">
+    <div class="import-shell glass-panel" style="width:min(560px,92vw);height:auto;grid-template-rows:auto auto auto;">
+      <div class="import-head">
+        <h2>新增用户</h2>
+        <div class="window-controls">
+          <button id="maxCreateUserModal" class="glass-btn tiny more-window-btn more-window-btn-max" type="button" aria-label="最大化/还原" title="最大化"></button>
+          <button id="closeCreateUserModal" class="glass-btn tiny more-window-btn more-window-btn-close" type="button" aria-label="关闭" title="关闭"></button>
+        </div>
+      </div>
+      <div class="import-tools create-user-tools" style="display:grid;grid-template-columns:1fr;gap:8px;">
+        <input id="newUserNameInput" type="text" placeholder="新用户名" />
+        <input id="newUserPasswordInput" type="password" placeholder="初始密码" />
+        <div class="role-inline">
+          <label for="newUserRoleSelect">角色：</label>
+          <select id="newUserRoleSelect">
+            <option value="admin">admin</option>
+            <option value="user">user</option>
+          </select>
+        </div>
+      </div>
+      <div class="import-actions">
+        <button id="submitCreateUserBtn" class="glass-btn strong" type="button">确认新增</button>
+        <button id="cancelCreateUserBtn" class="glass-btn" type="button">取消</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="adminResetUserModal" class="import-modal hidden">
+    <div class="import-shell glass-panel" style="width:min(560px,92vw);height:auto;grid-template-rows:auto auto auto;">
+      <div class="import-head">
+        <h2>用户管理 - 修改密码</h2>
+        <div class="window-controls">
+          <button id="maxAdminResetUserModal" class="glass-btn tiny more-window-btn more-window-btn-max" type="button" aria-label="最大化/还原" title="最大化"></button>
+          <button id="closeAdminResetUserModal" class="glass-btn tiny more-window-btn more-window-btn-close" type="button" aria-label="关闭" title="关闭"></button>
+        </div>
+      </div>
+      <div class="import-tools create-user-tools" style="display:grid;grid-template-columns:1fr;gap:8px;">
+        <input id="adminResetUserNameInput" type="text" placeholder="用户名" readonly class="readonly-info" />
+        <input id="adminResetUserRoleInput" type="text" placeholder="角色" readonly class="readonly-info" />
+        <input id="adminResetUserPasswordInput" type="password" placeholder="新密码" autocomplete="new-password" />
+      </div>
+      <div class="import-actions">
+        <button id="submitAdminResetUserBtn" class="glass-btn strong danger-btn" type="button">确认修改密码</button>
+        <button id="cancelAdminResetUserBtn" class="glass-btn" type="button">取消</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="appToast" class="app-toast hidden" role="status" aria-live="polite"></div>
+
+  <script src="./mock-data.js"></script>
+  <script src="./runtime-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+.DS_Store
+.venv/
+backups/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.sql
+*.xlsx
+*.xls
+*.csv
+.~*
+.vscode/

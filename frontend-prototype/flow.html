@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>数据流图 - Frontend Prototype</title>
+  <link rel="stylesheet" href="./styles.css?v=20260313-flowfix5" />
+</head>
+<body class="theme-dark flow-only">
+  <div class="bg-layer" aria-hidden="true">
+    <canvas id="bgCanvas"></canvas>
+    <div class="bg-glow glow-a"></div>
+    <div class="bg-glow glow-b"></div>
+  </div>
+
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="topbar-actions">
+        <a class="glass-btn flow-back-btn" href="./index.html">返回主页</a>
+      </div>
+    </header>
+
+    <main class="layout single">
+      <section class="flow-stage glass-panel">
+        <div class="flow-canvas" id="flowCanvas">
+          <div id="flowViewport" class="flow-viewport">
+            <svg id="flowEdges" class="edges" aria-hidden="true"></svg>
+            <div id="flowNodes" class="nodes"></div>
+          </div>
+          <div class="flow-title">
+            <span class="flow-title-icon" aria-hidden="true">
+              <svg viewBox="0 0 96 56" focusable="false" aria-hidden="true">
+                <rect x="4" y="4" width="36" height="14" rx="7" fill="#5f93ff" stroke="#c7e6ff" stroke-width="1.2" />
+                <rect x="56" y="4" width="36" height="14" rx="7" fill="#5f93ff" stroke="#c7e6ff" stroke-width="1.2" />
+                <rect x="30" y="36" width="36" height="14" rx="7" fill="#42c39c" stroke="#c6ffe7" stroke-width="1.2" />
+                <path d="M22 18 L48 36 L74 18" fill="none" stroke="#76b8ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                <circle cx="18" cy="11" r="2" fill="#f3d18b" />
+                <circle cx="74" cy="11" r="2" fill="#90d7ff" />
+                <circle cx="48" cy="43" r="2" fill="#9df6cc" />
+              </svg>
+            </span>
+            <span>数据流图</span>
+          </div>
+          <div class="flow-action-bar" aria-label="视图操作区">
+            <div id="layoutSpreadControl" class="layout-spread-control" role="group" aria-label="Spread Control">
+              <span class="spread-name">Spread Control</span>
+              <div class="spread-petals">
+                <button type="button" class="spread-petal" data-l1-step="-2" title="收紧很多">紧</button>
+                <button type="button" class="spread-petal" data-l1-step="-1" title="收紧">-</button>
+                <button type="button" class="spread-core" data-l1-step="0" title="恢复默认">中</button>
+                <button type="button" class="spread-petal" data-l1-step="1" title="放松">+</button>
+                <button type="button" class="spread-petal" data-l1-step="2" title="放松很多">松</button>
+              </div>
+            </div>
+            <label id="textToggle" class="reset-view text-toggle-switch" title="切换文本显示">
+              <span class="text-toggle-label">文本</span>
+              <input id="textToggleInput" type="checkbox" aria-label="切换文本显示" />
+              <i aria-hidden="true"></i>
+            </label>
+            <button id="resetView" class="reset-view" type="button" title="重置视图">重置视图</button>
+          </div>
+
+          <div id="legendDrawer" class="side-drawer legend-drawer collapsed" aria-label="图例抽屉">
+            <button id="legendToggle" class="drawer-peek" type="button" title="展开/收起图例" aria-label="展开/收起图例"></button>
+            <div class="legend-panel">
+              <div class="legend-title">图例</div>
+              <ul id="legendList" class="legend-list"></ul>
+            </div>
+          </div>
+
+          <div id="zoomDrawer" class="side-drawer zoom-drawer" aria-label="缩放抽屉">
+            <button id="zoomToggle" class="drawer-peek" type="button" title="展开/收起缩放控件" aria-label="展开/收起缩放控件"></button>
+            <div class="zoom-panel" aria-label="缩放控件">
+              <button id="zoomIn" class="zoom-btn" type="button" title="放大">+</button>
+              <input id="zoomSlider" class="zoom-slider" type="range" min="40" max="220" value="100" step="1" aria-label="缩放" />
+              <button id="zoomOut" class="zoom-btn" type="button" title="缩小">-</button>
+              <span id="zoomValue" class="zoom-value" aria-live="polite">100%</span>
+            </div>
+          </div>
+
+          <div id="includeDrawer" class="side-drawer include-drawer collapsed" aria-label="包含内容抽屉">
+            <button id="includeToggle" class="drawer-peek" type="button" title="展开/收起包含内容" aria-label="展开/收起包含内容"></button>
+            <div class="include-panel">
+              <div class="legend-title">数据流图选择</div>
+              <div id="includeToggles" class="include-list"></div>
+            </div>
+          </div>
+
+          <div id="miniMapDrawer" class="mini-map-drawer collapsed" aria-label="缩略图抽屉">
+            <button id="miniMapToggle" class="mini-map-peek" type="button" title="展开/收起缩略图" aria-label="展开/收起缩略图"></button>
+            <div class="mini-map-panel">
+              <canvas id="miniMapCanvas" class="mini-map-canvas" width="220" height="132" aria-label="数据流缩略图"></canvas>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="./mock-data.js"></script>
+  <script src="./runtime-config.js"></script>
+  <script src="https://unpkg.com/elkjs@0.9.2/lib/elk.bundled.js"></script>
+  <script src="./flow-page.js?v=20260313-flowfix6"></script>
+</body>
+</html>
