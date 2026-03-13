@@ -2108,28 +2108,47 @@ def execute_import(
     inserted_count = 0
     updated_count = 0
     try:
-        for row in rows:
-            row_dict = dict(zip(db_columns, row))
-            key_values = [row_dict[k] for k in key_fields]
+        row_dicts = [dict(zip(db_columns, row)) for row in rows]
+        key_tuples = [tuple(row_dict[k] for k in key_fields) for row_dict in row_dicts]
 
-            if mutable_fields:
-                update_values = [row_dict[c] for c in mutable_fields]
-                cur.execute(update_sql, tuple(update_values + key_values))
+        existing_keys: set[tuple] = set()
+        if key_tuples:
+            chunk_size = 300
+            key_match_sql = " AND ".join(f"`{k}` <=> %s" for k in key_fields)
+            select_cols_sql = ", ".join(f"`{k}`" for k in key_fields)
+
+            for start in range(0, len(key_tuples), chunk_size):
+                chunk = key_tuples[start:start + chunk_size]
+                where_sql = " OR ".join([f"({key_match_sql})" for _ in chunk])
+                params: list = []
+                for key_values in chunk:
+                    params.extend(key_values)
+                cur.execute(
+                    f"SELECT {select_cols_sql} FROM `{table_name}` WHERE {where_sql}",
+                    tuple(params),
+                )
+                existing_keys.update(tuple(row) for row in cur.fetchall())
+
+        update_params = []
+        insert_rows = []
+        for row_dict, key_values, row in zip(row_dicts, key_tuples, rows):
+            if key_values in existing_keys:
+                if mutable_fields:
+                    update_values = [row_dict[c] for c in mutable_fields]
+                    update_params.append(tuple(update_values + list(key_values)))
+                else:
+                    update_params.append(tuple(key_values))
             else:
-                cur.execute(update_sql, tuple(key_values))
+                insert_rows.append(row)
 
-            if cur.rowcount > 0:
-                updated_count += int(cur.rowcount)
-                continue
+        if update_params:
+            cur.executemany(update_sql, update_params)
+            # Keep semantics consistent with previous behavior where unchanged matched rows were counted.
+            updated_count = len(update_params)
 
-            cur.execute(exists_sql, tuple(key_values))
-            if cur.fetchone():
-                # Matched key exists but row values are unchanged.
-                updated_count += 1
-                continue
-
-            cur.execute(insert_sql, row)
-            inserted_count += 1
+        if insert_rows:
+            cur.executemany(insert_sql, insert_rows)
+            inserted_count = len(insert_rows)
 
         cur.execute(f"SELECT COUNT(*) FROM `{table_name}`")
         db_count = int(cur.fetchone()[0])

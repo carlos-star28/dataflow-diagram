@@ -420,7 +420,7 @@
     appToast.textContent = message;
     appToast.classList.remove("hidden");
 
-    const holdMs = variant === "error" ? 4200 : 2800;
+    const holdMs = variant === "error" ? 8400 : 2800;
     toastTimer = window.setTimeout(() => {
       appToast.classList.add("hidden");
       toastTimer = null;
@@ -1788,7 +1788,7 @@
     const resp = await apiFetch(`${importStatusApiBase}/import/execute`, {
       method: "POST",
       body: formData,
-      timeoutMs: 180000
+      timeoutMs: 300000
     });
 
     if (!resp.ok) {
