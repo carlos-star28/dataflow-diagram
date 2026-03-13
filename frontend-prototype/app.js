@@ -1787,7 +1787,8 @@
 
     const resp = await apiFetch(`${importStatusApiBase}/import/execute`, {
       method: "POST",
-      body: formData
+      body: formData,
+      timeoutMs: 180000
     });
 
     if (!resp.ok) {
@@ -1805,7 +1806,8 @@
 
     const resp = await apiFetch(`${importStatusApiBase}/import/clear-table`, {
       method: "POST",
-      body: formData
+      body: formData,
+      timeoutMs: 120000
     });
 
     if (!resp.ok) {
@@ -2182,6 +2184,8 @@
           showToast("导入失败：文件未读取到可导入数据行。请确认有表头并至少包含1行数据，再重试。", "error");
         } else if (/未读取到可导入数据行/.test(rawMsg)) {
           showToast(rawMsg, "error");
+        } else if (/request_timeout/i.test(rawMsg)) {
+          showToast("导入超时：数据量较大或网络较慢。请稍后重试，或拆分文件后再导入。", "error");
         } else {
           showToast(`导入失败，请确认后端服务已启动（${importStatusApiBase}）。${rawMsg ? ` 详情: ${rawMsg}` : ""}`, "error");
         }
