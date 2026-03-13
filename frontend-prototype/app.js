@@ -2151,7 +2151,14 @@
         showToast(successText);
         completeImportBusyState();
       } catch (err) {
-        showToast(`导入失败，请确认后端服务已启动（${importStatusApiBase}）。${err?.message ? ` 详情: ${err.message}` : ""}`, "error");
+        const rawMsg = String(err?.message || "").trim();
+        if (/no rows to import/i.test(rawMsg)) {
+          showToast("导入失败：文件未读取到可导入数据行。请确认有表头并至少包含1行数据，再重试。", "error");
+        } else if (/未读取到可导入数据行/.test(rawMsg)) {
+          showToast(rawMsg, "error");
+        } else {
+          showToast(`导入失败，请确认后端服务已启动（${importStatusApiBase}）。${rawMsg ? ` 详情: ${rawMsg}` : ""}`, "error");
+        }
         setImportBusyState(false);
       } finally {
         importTaskLock = false;

@@ -2033,6 +2033,16 @@ def execute_import(
         raise HTTPException(status_code=400, detail="mapping_json must be an object")
 
     source_df = parse_upload_to_dataframe(file, sheet_name or None)
+    if source_df.empty:
+        filename = str(file.filename or "").strip() or "<unknown>"
+        target_sheet = str(sheet_name or "").strip() or "首个Sheet/CSV"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"导入失败：文件 {filename} 在 {target_sheet} 未读取到可导入数据行。"
+                "请确认文件包含表头且至少有 1 行数据，并检查是否选对了 Sheet。"
+            ),
+        )
     db_columns = get_table_columns(table_name)
     col_lens = get_table_column_lengths(table_name)
     if not db_columns:
