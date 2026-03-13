@@ -144,6 +144,7 @@
   let activeExcelHeaders = [];
   let activeImportWorkbook = null;
   let activeImportFileName = "";
+  let activeImportDataRowCount = 0;
   let toastTimer = null;
   let searchRequestToken = 0;
   let recentSearches = [];
@@ -1936,39 +1937,59 @@
     const fileName = file.name.toLowerCase();
     if (fileName.endsWith(".csv")) {
       const text = await file.text();
-      const first = text.split(/\r?\n/).find((line) => line.trim());
-      return first ? first.split(",").map((x) => x.trim()).filter(Boolean) : [];
+      const lines = text.split(/\r?\n/);
+      const headerLineIndex = lines.findIndex((line) => line.trim());
+      if (headerLineIndex < 0) {
+        return { headers: [], rowCount: 0 };
+      }
+      const headerLine = lines[headerLineIndex];
+      const headers = headerLine ? headerLine.split(",").map((x) => x.trim()).filter(Boolean) : [];
+      const rowCount = lines.slice(headerLineIndex + 1).reduce((count, line) => count + (line.trim() ? 1 : 0), 0);
+      return { headers, rowCount };
     }
 
     if (!window.XLSX) {
       window.alert("当前环境未加载 Excel 解析库，请联网后重试或使用 CSV 文件。");
-      return [];
+      return { headers: [], rowCount: 0 };
     }
 
     const buffer = await file.arrayBuffer();
     const workbook = window.XLSX.read(buffer, { type: "array" });
     const firstSheet = workbook.SheetNames[0];
-    if (!firstSheet) return [];
+    if (!firstSheet) return { headers: [], rowCount: 0 };
     const sheet = workbook.Sheets[firstSheet];
     const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false });
     const headerRow = Array.isArray(rows[0]) ? rows[0] : [];
-    return headerRow.map((x) => String(x || "").trim()).filter(Boolean);
+    const headers = headerRow.map((x) => String(x || "").trim()).filter(Boolean);
+    const rowCount = rows.slice(1).reduce((count, row) => {
+      if (!Array.isArray(row)) return count;
+      const hasValue = row.some((cell) => String(cell || "").trim());
+      return count + (hasValue ? 1 : 0);
+    }, 0);
+    return { headers, rowCount };
   }
 
   function getHeadersFromSheet(workbook, sheetName) {
-    if (!workbook || !sheetName) return [];
+    if (!workbook || !sheetName) return { headers: [], rowCount: 0 };
     const sheet = workbook.Sheets[sheetName];
-    if (!sheet) return [];
+    if (!sheet) return { headers: [], rowCount: 0 };
     const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false });
     const headerRow = Array.isArray(rows[0]) ? rows[0] : [];
-    return headerRow.map((x) => String(x || "").trim()).filter(Boolean);
+    const headers = headerRow.map((x) => String(x || "").trim()).filter(Boolean);
+    const rowCount = rows.slice(1).reduce((count, row) => {
+      if (!Array.isArray(row)) return count;
+      const hasValue = row.some((cell) => String(cell || "").trim());
+      return count + (hasValue ? 1 : 0);
+    }, 0);
+    return { headers, rowCount };
   }
 
-  function renderMappingByHeaders(headers) {
+  function renderMappingByHeaders(headers, rowCount = 0) {
     const dbFields = getVisibleDbFields(activeImportTable);
     const suggested = suggestMapping(dbFields, headers);
 
     activeExcelHeaders = headers;
+    activeImportDataRowCount = Math.max(0, Number(rowCount) || 0);
     if (!headers.length) {
       importMeta.innerHTML = "";
       importMapBody.innerHTML = "";
@@ -1982,6 +2003,7 @@
   function openImportModal(tableName) {
     activeImportTable = tableName;
     activeExcelHeaders = [];
+    activeImportDataRowCount = 0;
     importTaskLock = false;
     resetImportProgress();
     importModalTitle.textContent = `字段映射 - ${tableName}`;
@@ -2051,8 +2073,8 @@
           importSheetSelect.innerHTML = '<option value="">CSV无Sheet</option>';
           importSheetSelect.disabled = true;
         }
-        const headers = await parseExcelHeaders(file);
-        renderMappingByHeaders(headers);
+        const parsed = await parseExcelHeaders(file);
+        renderMappingByHeaders(parsed.headers, parsed.rowCount);
         return;
       }
 
@@ -2074,16 +2096,16 @@
       }
 
       const firstSheet = sheets[0] || "";
-      const headers = getHeadersFromSheet(workbook, firstSheet);
-      renderMappingByHeaders(headers);
+      const parsed = getHeadersFromSheet(workbook, firstSheet);
+      renderMappingByHeaders(parsed.headers, parsed.rowCount);
     });
 
     if (importSheetSelect) {
       importSheetSelect.addEventListener("change", () => {
         if (!activeImportWorkbook) return;
         const sheetName = importSheetSelect.value;
-        const headers = getHeadersFromSheet(activeImportWorkbook, sheetName);
-        renderMappingByHeaders(headers);
+        const parsed = getHeadersFromSheet(activeImportWorkbook, sheetName);
+        renderMappingByHeaders(parsed.headers, parsed.rowCount);
       });
     }
 
@@ -2125,6 +2147,10 @@
       const selectedFile = importFileInput.files && importFileInput.files[0];
       if (!selectedFile) {
         window.alert("请先选择要导入的 Excel/CSV 文件。");
+        return;
+      }
+      if (activeImportDataRowCount <= 0) {
+        showToast("导入失败：当前文件仅识别到表头，未检测到数据行。请检查文件内容或切换正确的 Sheet。", "error");
         return;
       }
 

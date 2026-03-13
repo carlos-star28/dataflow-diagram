@@ -132,7 +132,7 @@ body:not(.flow-only) .layout.centered {
   height: min(82vh, 740px);
   padding: 14px;
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto;
+  grid-template-rows: auto auto auto auto 1fr auto;
   gap: 10px;
 }
 
@@ -361,7 +361,12 @@ body:not(.flow-only) .layout.centered {
 }
 
 .import-map-table tr.mapped-row td {
+  background: transparent;
+}
+
+.import-map-table tr.mapped-row td select {
   background: rgba(72, 168, 118, 0.28);
+  border-color: rgba(138, 236, 184, 0.55);
 }
 
 .import-actions {
