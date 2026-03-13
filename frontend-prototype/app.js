@@ -85,6 +85,9 @@
   const importFileInput = document.getElementById("importFileInput");
   const importSheetSelect = document.getElementById("importSheetSelect");
   const importMeta = document.getElementById("importMeta");
+  const importProgressWrap = document.getElementById("importProgressWrap");
+  const importProgressText = document.getElementById("importProgressText");
+  const importProgressBar = document.getElementById("importProgressBar");
   const importMapBody = document.getElementById("importMapBody");
   const autoMapBtn = document.getElementById("autoMapBtn");
   const clearAllTableDataBtn = document.getElementById("clearAllTableDataBtn");
@@ -93,6 +96,7 @@
 
   let currentUser = null;
   let authStateEpoch = 0;
+  let isAuthBootstrapInFlight = true;
   function normalizeLoopbackApiHost(rawHost) {
     const host = String(rawHost || "").trim();
     if (!host) return host;
@@ -148,6 +152,9 @@
   let recentMetaHydrating = false;
   let selectedStartContext = { id: "", source: "", type: "" };
   let selectedAdminResetUsername = "";
+  let importProgressTimer = null;
+  let importProgressValue = 0;
+  let importTaskLock = false;
 
   async function apiFetch(url, options = {}, skipAuthGuard = false) {
     const opts = options || {};
@@ -381,6 +388,12 @@
       .replaceAll(">", "&gt;");
   }
 
+  function escAttr(str) {
+    return esc(str)
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+  }
+
   function markKeyword(text, keyword) {
     const t = String(text);
     if (!keyword) return esc(t);
@@ -406,10 +419,79 @@
     appToast.textContent = message;
     appToast.classList.remove("hidden");
 
+    const holdMs = variant === "error" ? 4200 : 2800;
     toastTimer = window.setTimeout(() => {
       appToast.classList.add("hidden");
       toastTimer = null;
-    }, 2800);
+    }, holdMs);
+  }
+
+  function clearImportProgressTimer() {
+    if (importProgressTimer) {
+      window.clearInterval(importProgressTimer);
+      importProgressTimer = null;
+    }
+  }
+
+  function resetImportProgress() {
+    clearImportProgressTimer();
+    importProgressValue = 0;
+    if (importProgressBar) {
+      importProgressBar.style.width = "0%";
+      const track = importProgressBar.parentElement;
+      if (track) track.setAttribute("aria-valuenow", "0");
+    }
+    if (importProgressText) importProgressText.textContent = "处理中...";
+    if (importProgressWrap) importProgressWrap.classList.add("hidden");
+  }
+
+  function setImportBusyState(isBusy, label = "处理中...") {
+    if (importModalShell) {
+      importModalShell.classList.toggle("is-busy", isBusy);
+    }
+    [importFileInput, importSheetSelect, autoMapBtn, clearAllTableDataBtn, confirmImportBtn].forEach((el) => {
+      if (!el) return;
+      el.disabled = isBusy;
+    });
+
+    if (!isBusy) {
+      resetImportProgress();
+      return;
+    }
+
+    if (importProgressWrap) importProgressWrap.classList.remove("hidden");
+    if (importProgressText) importProgressText.textContent = label;
+
+    clearImportProgressTimer();
+    importProgressValue = 8;
+    if (importProgressBar) {
+      importProgressBar.style.width = `${importProgressValue}%`;
+      const track = importProgressBar.parentElement;
+      if (track) track.setAttribute("aria-valuenow", String(Math.round(importProgressValue)));
+    }
+
+    importProgressTimer = window.setInterval(() => {
+      if (!importProgressBar) return;
+      const inc = 2 + Math.random() * 6;
+      importProgressValue = Math.min(92, importProgressValue + inc);
+      importProgressBar.style.width = `${importProgressValue}%`;
+      const track = importProgressBar.parentElement;
+      if (track) track.setAttribute("aria-valuenow", String(Math.round(importProgressValue)));
+    }, 220);
+  }
+
+  function completeImportBusyState() {
+    clearImportProgressTimer();
+    if (importProgressBar) {
+      importProgressValue = 100;
+      importProgressBar.style.width = "100%";
+      const track = importProgressBar.parentElement;
+      if (track) track.setAttribute("aria-valuenow", "100");
+    }
+
+    window.setTimeout(() => {
+      setImportBusyState(false);
+    }, 260);
   }
 
   function buildDropdownWithMore(rowsHtml, moreId) {
@@ -1134,6 +1216,13 @@
 
   function refreshUserMenu() {
     if (!currentUser) {
+      if (isAuthBootstrapInFlight) {
+        if (userMenuBtn) userMenuBtn.classList.add("hidden");
+        if (userMenuWho) userMenuWho.textContent = "--";
+        if (userMenuPanel) userMenuPanel.classList.add("hidden");
+        hideLoginGate();
+        return;
+      }
       if (userMenuBtn) {
         userMenuBtn.textContent = "登录";
         userMenuBtn.classList.remove("hidden");
@@ -1638,11 +1727,12 @@
       if (epoch !== authStateEpoch) return;
       if (currentUser) return;
       currentUser = me;
-      refreshUserMenu();
     } catch {
       if (epoch !== authStateEpoch) return;
       if (currentUser) return;
       currentUser = null;
+    } finally {
+      isAuthBootstrapInFlight = false;
       refreshUserMenu();
     }
   }
@@ -1749,7 +1839,7 @@
       .concat(
         excelFields.map((field) => {
           const isSelected = selected === field ? "selected" : "";
-          return `<option value="${esc(field)}" ${isSelected}>${esc(field)}</option>`;
+          return `<option value="${escAttr(field)}" ${isSelected}>${esc(field)}</option>`;
         })
       )
       .join("");
@@ -1805,14 +1895,15 @@
   function renderMappingProgressMeta() {
     if (!activeImportTable) return;
 
-    const rows = [...importMapBody.querySelectorAll("tr")];
-    const total = rows.length;
+    const visibleDbFields = getVisibleDbFields(activeImportTable);
+    const total = visibleDbFields.length;
     if (!total) return;
 
-    const mapped = rows.reduce((count, row) => {
-      const select = row.querySelector("select");
-      const value = String(select?.value || "").trim();
-      return count + (value ? 1 : 0);
+    const mapping = readMappingFromUI();
+    const mapped = visibleDbFields.reduce((count, dbField) => {
+      const value = String(mapping[dbField] || "").trim();
+      if (!value || value.startsWith("__LOGIC_")) return count;
+      return count + 1;
     }, 0);
     const unmapped = Math.max(0, total - mapped);
     const isComplete = unmapped === 0;
@@ -1891,6 +1982,8 @@
   function openImportModal(tableName) {
     activeImportTable = tableName;
     activeExcelHeaders = [];
+    importTaskLock = false;
+    resetImportProgress();
     importModalTitle.textContent = `字段映射 - ${tableName}`;
     importMeta.innerHTML = "";
     importFileInput.value = "";
@@ -1975,7 +2068,7 @@
 
       if (importSheetSelect) {
         importSheetSelect.innerHTML = sheets
-          .map((name, idx) => `<option value="${esc(name)}" ${idx === 0 ? "selected" : ""}>${esc(name)}</option>`)
+          .map((name, idx) => `<option value="${escAttr(name)}" ${idx === 0 ? "selected" : ""}>${esc(name)}</option>`)
           .join("");
         importSheetSelect.disabled = sheets.length === 0;
       }
@@ -2003,23 +2096,31 @@
 
     if (clearAllTableDataBtn) {
       clearAllTableDataBtn.addEventListener("click", async () => {
+        if (importTaskLock) return;
         const ok = window.confirm(`确认删除当前表(${activeImportTable})的全部数据吗？此操作不可撤销。`);
         if (!ok) return;
 
         try {
+          importTaskLock = true;
+          setImportBusyState(true, "正在删除库表数据...");
           const result = await clearImportTable(activeImportTable);
           await refreshImportCardTimes();
           const deletedCount = Number(result.deleted_rows || 0);
           const currentCount = Number(result.current_count || 0);
           const successText = `删除完成：${result.table_name}，共删除 ${deletedCount} 条，当前数据条目 ${currentCount} 条，更新时间 ${result.last_update}。`;
           showToast(successText);
+          completeImportBusyState();
         } catch (err) {
           showToast(`删除失败，请确认后端服务已启动（${importStatusApiBase}）。${err?.message ? ` 详情: ${err.message}` : ""}`, "error");
+          setImportBusyState(false);
+        } finally {
+          importTaskLock = false;
         }
       });
     }
 
     confirmImportBtn.addEventListener("click", async () => {
+      if (importTaskLock) return;
       if (!activeImportTable) return;
       const selectedFile = importFileInput.files && importFileInput.files[0];
       if (!selectedFile) {
@@ -2035,6 +2136,8 @@
       }
 
       try {
+        importTaskLock = true;
+        setImportBusyState(true, "正在导入数据...");
         const sheetName = importSheetSelect && !importSheetSelect.disabled ? importSheetSelect.value : "";
         const result = await executeImport({
           tableName: activeImportTable,
@@ -2046,8 +2149,12 @@
         const importedCount = Number(result.db_count ?? result.affected_rows ?? 0);
         const successText = `导入完成: ${result.table_name}，当前数据条目 ${importedCount}，更新时间 ${result.last_update}`;
         showToast(successText);
+        completeImportBusyState();
       } catch (err) {
         showToast(`导入失败，请确认后端服务已启动（${importStatusApiBase}）。${err?.message ? ` 详情: ${err.message}` : ""}`, "error");
+        setImportBusyState(false);
+      } finally {
+        importTaskLock = false;
       }
     });
 
