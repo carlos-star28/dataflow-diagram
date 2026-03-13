@@ -2060,9 +2060,9 @@ def execute_import(
     duplicate_mode: str = Form("fail"),
     file: UploadFile = File(...),
 ) -> Dict[str, str | int]:
-        duplicate_mode = str(duplicate_mode or "fail").strip().lower()
-        if duplicate_mode not in {"fail", "continue"}:
-            raise HTTPException(status_code=400, detail="duplicate_mode must be fail or continue")
+    duplicate_mode = str(duplicate_mode or "fail").strip().lower()
+    if duplicate_mode not in {"fail", "continue"}:
+        raise HTTPException(status_code=400, detail="duplicate_mode must be fail or continue")
 
     table_name = table_name.strip()
     if table_name not in ALLOWED_TABLES:
