@@ -139,9 +139,14 @@
 
       <div class="import-tools">
         <input id="importFileInput" type="file" accept=".xlsx,.xls,.csv" />
+        <label class="import-tool-label" for="importSheetSelect">页签</label>
         <select id="importSheetSelect" title="选择Sheet" disabled>
           <option value="">Sheet页</option>
         </select>
+        <label id="importHeaderRowWrap" class="import-tool-inline hidden" for="importHeaderRowInput">
+          <span class="import-tool-label">标题行数</span>
+          <input id="importHeaderRowInput" class="import-tool-number" type="number" min="1" step="1" value="1" inputmode="numeric" />
+        </label>
         <button id="autoMapBtn" class="glass-btn" type="button">自动映射</button>
       </div>
 
@@ -221,14 +226,20 @@
 
   <section id="loginGate" class="login-gate hidden">
     <div class="login-shell glass-panel">
-      <h2>Dataflow App</h2>
+      <h2>数据流查看工具</h2>
       <div class="login-form-row">
         <label for="loginUsername">用户名</label>
         <input id="loginUsername" type="text" autocomplete="username" />
       </div>
       <div class="login-form-row">
         <label for="loginPassword">密码</label>
-        <input id="loginPassword" type="password" autocomplete="current-password" />
+        <div class="login-password-inline">
+          <input id="loginPassword" type="password" autocomplete="current-password" />
+          <label class="login-password-toggle" for="loginShowPassword">
+            <input id="loginShowPassword" type="checkbox" />
+            <span>显示密码</span>
+          </label>
+        </div>
       </div>
       <div id="loginErrorText" class="login-error-text hidden"></div>
       <div class="login-actions">
@@ -337,11 +348,17 @@
     </div>
   </section>
 
-  <div id="appToast" class="app-toast hidden" role="status" aria-live="polite"></div>
+  <div id="appToast" class="app-toast hidden" role="status" aria-live="polite">
+    <div id="appToastText" class="app-toast-text"></div>
+    <div id="appToastActions" class="app-toast-actions hidden">
+      <button id="appToastCopyBtn" class="app-toast-btn" type="button">复制</button>
+      <button id="appToastCloseBtn" class="app-toast-btn" type="button">关闭</button>
+    </div>
+  </div>
 
-  <script src="./mock-data.js?v=20260314-mapfix10"></script>
-  <script src="./runtime-config.js?v=20260314-mapfix10"></script>
+  <script src="./mock-data.js?v=20260314-mapfix11"></script>
+  <script src="./runtime-config.js?v=20260314-mapfix11"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="./app.js?v=20260314-mapfix10"></script>
+  <script src="./app.js?v=20260314-mapfix11"></script>
 </body>
 </html>

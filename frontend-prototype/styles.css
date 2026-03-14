@@ -172,6 +172,28 @@ body:not(.flow-only) .layout.centered {
   padding: 0 8px;
 }
 
+.import-tool-label {
+  font-size: 12px;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.import-tool-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.import-tool-number {
+  width: 88px;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-main);
+  padding: 0 8px;
+}
+
 .create-user-tools label {
   font-size: 13px;
   color: var(--text-soft);
@@ -612,6 +634,26 @@ body:not(.flow-only) .layout.centered {
   padding: 0 10px;
 }
 
+.login-password-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.login-password-inline input[type="password"],
+.login-password-inline input[type="text"] {
+  flex: 1;
+}
+
+.login-password-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
 .login-shell.has-error .login-form-row input {
   border-color: rgba(255, 138, 138, 0.85);
   box-shadow: 0 0 0 2px rgba(255, 138, 138, 0.2);
@@ -874,16 +916,49 @@ body[data-dropdown-mode="push"] .dropdown {
   z-index: 120;
   min-width: 280px;
   max-width: min(80vw, 640px);
-  padding: 10px 16px;
+  padding: 10px 12px 10px 14px;
   border-radius: 12px;
   border: 1px solid rgba(156, 247, 189, 0.55);
   background: rgba(25, 56, 37, 0.9);
   color: #ebfff2;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   font-size: 14px;
-  text-align: center;
+  text-align: left;
   backdrop-filter: blur(6px);
   animation: toastIn 180ms ease;
+  display: grid;
+  gap: 8px;
+}
+
+.app-toast.with-actions {
+  padding-top: 30px;
+}
+
+.app-toast-text {
+  line-height: 1.35;
+}
+
+.app-toast-actions {
+  position: absolute;
+  right: 10px;
+  top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.app-toast-btn {
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.14);
+  color: #f1f7ff;
+  border-radius: 999px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.app-toast-btn:hover {
+  background: rgba(156, 201, 255, 0.2);
 }
 
 .app-toast.error {

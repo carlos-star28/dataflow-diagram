@@ -24,6 +24,7 @@
   const loginShell = loginGate ? loginGate.querySelector(".login-shell") : null;
   const loginUsername = document.getElementById("loginUsername");
   const loginPassword = document.getElementById("loginPassword");
+  const loginShowPassword = document.getElementById("loginShowPassword");
   const loginErrorText = document.getElementById("loginErrorText");
   const loginSubmitBtn = document.getElementById("loginSubmitBtn");
   const loginCancelBtn = document.getElementById("loginCancelBtn");
@@ -84,6 +85,8 @@
   const importModalTitle = document.getElementById("importModalTitle");
   const importFileInput = document.getElementById("importFileInput");
   const importSheetSelect = document.getElementById("importSheetSelect");
+  const importHeaderRowWrap = document.getElementById("importHeaderRowWrap");
+  const importHeaderRowInput = document.getElementById("importHeaderRowInput");
   const importMeta = document.getElementById("importMeta");
   const importProgressWrap = document.getElementById("importProgressWrap");
   const importProgressText = document.getElementById("importProgressText");
@@ -93,6 +96,10 @@
   const clearAllTableDataBtn = document.getElementById("clearAllTableDataBtn");
   const confirmImportBtn = document.getElementById("confirmImportBtn");
   const appToast = document.getElementById("appToast");
+  const appToastText = document.getElementById("appToastText");
+  const appToastActions = document.getElementById("appToastActions");
+  const appToastCopyBtn = document.getElementById("appToastCopyBtn");
+  const appToastCloseBtn = document.getElementById("appToastCloseBtn");
 
   let currentUser = null;
   let authStateEpoch = 0;
@@ -156,6 +163,7 @@
   let importProgressTimer = null;
   let importProgressValue = 0;
   let importTaskLock = false;
+  let lastToastMessage = "";
 
   async function apiFetch(url, options = {}, skipAuthGuard = false) {
     const opts = options || {};
@@ -406,6 +414,15 @@
     return `${a}<span class="mark">${b}</span>${c}`;
   }
 
+  function hideToast() {
+    if (!appToast) return;
+    appToast.classList.add("hidden");
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+  }
+
   function showToast(message, variant = "success") {
     if (!appToast) return;
     if (toastTimer) {
@@ -413,17 +430,31 @@
       toastTimer = null;
     }
 
+    const text = String(message || "").trim();
+    lastToastMessage = text;
+
     appToast.classList.remove("error");
+    appToast.classList.remove("with-actions");
     if (variant === "error") {
       appToast.classList.add("error");
+      appToast.classList.add("with-actions");
     }
-    appToast.textContent = message;
+    if (appToastText) {
+      appToastText.textContent = text;
+    } else {
+      appToast.textContent = text;
+    }
+    if (appToastActions) {
+      appToastActions.classList.toggle("hidden", variant !== "error");
+    }
+    if (appToastCopyBtn) {
+      appToastCopyBtn.textContent = "复制";
+    }
     appToast.classList.remove("hidden");
 
-    const holdMs = variant === "error" ? 8400 : 2800;
+    const holdMs = variant === "error" ? 16800 : 2800;
     toastTimer = window.setTimeout(() => {
-      appToast.classList.add("hidden");
-      toastTimer = null;
+      hideToast();
     }, holdMs);
   }
 
@@ -450,7 +481,7 @@
     if (importModalShell) {
       importModalShell.classList.toggle("is-busy", isBusy);
     }
-    [importFileInput, importSheetSelect, autoMapBtn, clearAllTableDataBtn, confirmImportBtn].forEach((el) => {
+    [importFileInput, importSheetSelect, importHeaderRowInput, autoMapBtn, clearAllTableDataBtn, confirmImportBtn].forEach((el) => {
       if (!el) return;
       el.disabled = isBusy;
     });
@@ -1358,6 +1389,10 @@
         await authLogin(username, password);
         currentUser = await authMe();
         if (loginPassword) loginPassword.value = "";
+        if (loginShowPassword) {
+          loginShowPassword.checked = false;
+          loginPassword?.setAttribute("type", "password");
+        }
         if (searchInput) searchInput.value = "";
         setSelectedStartContext();
         if (clearSearch) clearSearch.style.display = "none";
@@ -1392,10 +1427,20 @@
       });
     });
 
+    if (loginShowPassword && loginPassword) {
+      loginShowPassword.addEventListener("change", () => {
+        loginPassword.setAttribute("type", loginShowPassword.checked ? "text" : "password");
+      });
+    }
+
     if (loginCancelBtn) {
       loginCancelBtn.addEventListener("click", () => {
         if (loginUsername) loginUsername.value = "";
         if (loginPassword) loginPassword.value = "";
+        if (loginShowPassword) {
+          loginShowPassword.checked = false;
+          loginPassword?.setAttribute("type", "password");
+        }
         setLoginError("");
         showLoginGate();
       });
@@ -1416,6 +1461,24 @@
       if (userMenuPanel.contains(event.target) || userMenuBtn.contains(event.target)) return;
       userMenuPanel.classList.add("hidden");
     });
+
+    if (appToastCloseBtn) {
+      appToastCloseBtn.addEventListener("click", () => {
+        hideToast();
+      });
+    }
+
+    if (appToastCopyBtn) {
+      appToastCopyBtn.addEventListener("click", async () => {
+        if (!lastToastMessage) return;
+        try {
+          await navigator.clipboard.writeText(lastToastMessage);
+          appToastCopyBtn.textContent = "已复制✅";
+        } catch {
+          appToastCopyBtn.textContent = "复制失败";
+        }
+      });
+    }
 
     if (logoutBtn) {
       logoutBtn.addEventListener("click", async () => {
@@ -1936,19 +1999,37 @@
     return mapped;
   }
 
-  async function parseExcelHeaders(file) {
+  function getHeaderRowNumber() {
+    const parsed = Number.parseInt(String(importHeaderRowInput?.value || "1"), 10);
+    if (!Number.isFinite(parsed) || parsed < 1) return 1;
+    return Math.min(parsed, 999);
+  }
+
+  function extractHeadersAndRowCount(rows, headerRowNumber = 1) {
+    const list = Array.isArray(rows) ? rows : [];
+    const headerIndex = Math.max(0, Math.min(list.length - 1, headerRowNumber - 1));
+    const headerRow = Array.isArray(list[headerIndex]) ? list[headerIndex] : [];
+    const headers = headerRow.map((x) => String(x || "").trim()).filter(Boolean);
+
+    const rowCount = list.slice(headerIndex + 1).reduce((count, row) => {
+      if (!Array.isArray(row)) return count;
+      const hasValue = row.some((cell) => String(cell || "").trim());
+      return count + (hasValue ? 1 : 0);
+    }, 0);
+
+    return { headers, rowCount };
+  }
+
+  async function parseExcelHeaders(file, headerRowNumber = 1) {
     const fileName = file.name.toLowerCase();
     if (fileName.endsWith(".csv")) {
       const text = await file.text();
       const lines = text.split(/\r?\n/);
-      const headerLineIndex = lines.findIndex((line) => line.trim());
-      if (headerLineIndex < 0) {
+      const rows = lines.filter((line) => line.trim()).map((line) => line.split(","));
+      if (!rows.length) {
         return { headers: [], rowCount: 0 };
       }
-      const headerLine = lines[headerLineIndex];
-      const headers = headerLine ? headerLine.split(",").map((x) => x.trim()).filter(Boolean) : [];
-      const rowCount = lines.slice(headerLineIndex + 1).reduce((count, line) => count + (line.trim() ? 1 : 0), 0);
-      return { headers, rowCount };
+      return extractHeadersAndRowCount(rows, headerRowNumber);
     }
 
     if (!window.XLSX) {
@@ -1962,29 +2043,15 @@
     if (!firstSheet) return { headers: [], rowCount: 0 };
     const sheet = workbook.Sheets[firstSheet];
     const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false });
-    const headerRow = Array.isArray(rows[0]) ? rows[0] : [];
-    const headers = headerRow.map((x) => String(x || "").trim()).filter(Boolean);
-    const rowCount = rows.slice(1).reduce((count, row) => {
-      if (!Array.isArray(row)) return count;
-      const hasValue = row.some((cell) => String(cell || "").trim());
-      return count + (hasValue ? 1 : 0);
-    }, 0);
-    return { headers, rowCount };
+    return extractHeadersAndRowCount(rows, headerRowNumber);
   }
 
-  function getHeadersFromSheet(workbook, sheetName) {
+  function getHeadersFromSheet(workbook, sheetName, headerRowNumber = 1) {
     if (!workbook || !sheetName) return { headers: [], rowCount: 0 };
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) return { headers: [], rowCount: 0 };
     const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false });
-    const headerRow = Array.isArray(rows[0]) ? rows[0] : [];
-    const headers = headerRow.map((x) => String(x || "").trim()).filter(Boolean);
-    const rowCount = rows.slice(1).reduce((count, row) => {
-      if (!Array.isArray(row)) return count;
-      const hasValue = row.some((cell) => String(cell || "").trim());
-      return count + (hasValue ? 1 : 0);
-    }, 0);
-    return { headers, rowCount };
+    return extractHeadersAndRowCount(rows, headerRowNumber);
   }
 
   function renderMappingByHeaders(headers, rowCount = 0) {
@@ -2012,6 +2079,13 @@
     importModalTitle.textContent = `字段映射 - ${tableName}`;
     importMeta.innerHTML = "";
     importFileInput.value = "";
+    if (importHeaderRowInput) {
+      importHeaderRowInput.value = "1";
+      importHeaderRowInput.disabled = tableName !== "bw_object_name";
+    }
+    if (importHeaderRowWrap) {
+      importHeaderRowWrap.classList.toggle("hidden", tableName !== "bw_object_name");
+    }
     if (importSheetSelect) {
       importSheetSelect.innerHTML = '<option value="">Sheet页</option>';
       importSheetSelect.disabled = true;
@@ -2076,7 +2150,7 @@
           importSheetSelect.innerHTML = '<option value="">CSV无Sheet</option>';
           importSheetSelect.disabled = true;
         }
-        const parsed = await parseExcelHeaders(file);
+        const parsed = await parseExcelHeaders(file, getHeaderRowNumber());
         renderMappingByHeaders(parsed.headers, parsed.rowCount);
         return;
       }
@@ -2099,7 +2173,7 @@
       }
 
       const firstSheet = sheets[0] || "";
-      const parsed = getHeadersFromSheet(workbook, firstSheet);
+      const parsed = getHeadersFromSheet(workbook, firstSheet, getHeaderRowNumber());
       renderMappingByHeaders(parsed.headers, parsed.rowCount);
     });
 
@@ -2107,7 +2181,27 @@
       importSheetSelect.addEventListener("change", () => {
         if (!activeImportWorkbook) return;
         const sheetName = importSheetSelect.value;
-        const parsed = getHeadersFromSheet(activeImportWorkbook, sheetName);
+        const parsed = getHeadersFromSheet(activeImportWorkbook, sheetName, getHeaderRowNumber());
+        renderMappingByHeaders(parsed.headers, parsed.rowCount);
+      });
+    }
+
+    if (importHeaderRowInput) {
+      importHeaderRowInput.addEventListener("change", async () => {
+        importHeaderRowInput.value = String(getHeaderRowNumber());
+        const file = importFileInput?.files && importFileInput.files[0];
+        if (!file || !activeImportTable) return;
+
+        const fileNameLower = file.name.toLowerCase();
+        if (fileNameLower.endsWith(".csv")) {
+          const parsed = await parseExcelHeaders(file, getHeaderRowNumber());
+          renderMappingByHeaders(parsed.headers, parsed.rowCount);
+          return;
+        }
+
+        if (!activeImportWorkbook || !importSheetSelect) return;
+        const sheetName = importSheetSelect.value;
+        const parsed = getHeadersFromSheet(activeImportWorkbook, sheetName, getHeaderRowNumber());
         renderMappingByHeaders(parsed.headers, parsed.rowCount);
       });
     }
@@ -2211,7 +2305,11 @@
             return;
           } catch (retryErr) {
             const retryMsg = String(retryErr?.message || "").trim();
-            showToast(`导入失败，请确认后端服务已启动（${importStatusApiBase}）。${retryMsg ? ` 详情: ${retryMsg}` : ""}`, "error");
+            if (/internal server error|status 500/i.test(retryMsg)) {
+              showToast("导入失败：后端服务内部错误。请稍后重试；若持续失败，请在 Render 查看服务日志。", "error");
+            } else {
+              showToast(`导入失败，请确认后端服务已启动（${importStatusApiBase}）。${retryMsg ? ` 详情: ${retryMsg}` : ""}`, "error");
+            }
             setImportBusyState(false);
             return;
           }
@@ -2222,6 +2320,8 @@
           showToast(rawMsg, "error");
         } else if (/request_timeout/i.test(rawMsg)) {
           showToast("导入超时：数据量较大或网络较慢。请稍后重试，或拆分文件后再导入。", "error");
+        } else if (/internal server error|status 500/i.test(rawMsg)) {
+          showToast("导入失败：后端服务内部错误。请稍后重试；若持续失败，请在 Render 查看服务日志。", "error");
         } else {
           showToast(`导入失败，请确认后端服务已启动（${importStatusApiBase}）。${rawMsg ? ` 详情: ${rawMsg}` : ""}`, "error");
         }
