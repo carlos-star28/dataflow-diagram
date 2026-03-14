@@ -1926,9 +1926,11 @@ def upsert_import_status(payload: ImportStatusUpdate) -> Dict[str, str | int]:
     return {"table_name": table_name, "last_update": status["last_update"], "last_count": status["last_count"]}
 
 
-@app.get("/api/search-more/bw-object-name")
-def search_more_bw_object_name(keyword: str = Query(default="")) -> Dict[str, object]:
+def fetch_searchable_bw_objects(keyword: str, limit: int) -> tuple[str, list[dict[str, str]]]:
     kw = (keyword or "").strip()
+    rstran_cols = set(get_table_columns("rstran"))
+    source_col = "SOURCE" if "SOURCE" in rstran_cols else "DATASOURCE"
+
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
 
@@ -1936,41 +1938,137 @@ def search_more_bw_object_name(keyword: str = Query(default="")) -> Dict[str, ob
         if len(kw) >= 3:
             like_kw = f"%{kw}%"
             cur.execute(
-                """
-                SELECT BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE, NAME_EN, NAME_DE
-                FROM bw_object_name
-                WHERE BW_OBJECT LIKE %s
-                   OR NAME_EN LIKE %s
-                   OR NAME_DE LIKE %s
-                   OR SOURCESYS LIKE %s
-                   OR BW_OBJECT_TYPE LIKE %s
-                ORDER BY BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE
+                f"""
+                SELECT *
+                FROM (
+                    SELECT DISTINCT
+                        TRIM(BW_OBJECT) AS id,
+                        COALESCE(TRIM(SOURCESYS), '') AS source,
+                        COALESCE(TRIM(BW_OBJECT_TYPE), '') AS type
+                    FROM bw_object_name
+                    WHERE BW_OBJECT LIKE %s
+                       OR NAME_EN LIKE %s
+                       OR NAME_DE LIKE %s
+                       OR SOURCESYS LIKE %s
+                       OR BW_OBJECT_TYPE LIKE %s
+
+                    UNION
+
+                    SELECT DISTINCT
+                        TRIM(`{source_col}`) AS id,
+                        COALESCE(TRIM(SOURCESYS), '') AS source,
+                        COALESCE(TRIM(SOURCETYPE), '') AS type
+                    FROM rstran
+                    WHERE `{source_col}` IS NOT NULL
+                      AND TRIM(`{source_col}`) <> ''
+                      AND (
+                        `{source_col}` LIKE %s
+                        OR SOURCENAME LIKE %s
+                        OR SOURCESYS LIKE %s
+                        OR SOURCETYPE LIKE %s
+                      )
+
+                    UNION
+
+                    SELECT DISTINCT
+                        TRIM(TARGETNAME) AS id,
+                        '' AS source,
+                        COALESCE(TRIM(TARGETTYPE), '') AS type
+                    FROM rstran
+                    WHERE TARGETNAME IS NOT NULL
+                      AND TRIM(TARGETNAME) <> ''
+                      AND (
+                        TARGETNAME LIKE %s
+                        OR TARGETTYPE LIKE %s
+                      )
+                ) q
+                WHERE q.id IS NOT NULL AND q.id <> ''
+                ORDER BY q.id, q.source, q.type
+                LIMIT {int(limit)}
                 """,
-                (like_kw, like_kw, like_kw, like_kw, like_kw),
+                (
+                    like_kw, like_kw, like_kw, like_kw, like_kw,
+                    like_kw, like_kw, like_kw, like_kw,
+                    like_kw, like_kw,
+                ),
             )
             mode = "search"
         else:
             cur.execute(
-                """
-                SELECT BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE, NAME_EN, NAME_DE
-                FROM bw_object_name
-                ORDER BY BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE
-                LIMIT 100
+                f"""
+                SELECT *
+                FROM (
+                    SELECT DISTINCT
+                        TRIM(BW_OBJECT) AS id,
+                        COALESCE(TRIM(SOURCESYS), '') AS source,
+                        COALESCE(TRIM(BW_OBJECT_TYPE), '') AS type
+                    FROM bw_object_name
+
+                    UNION
+
+                    SELECT DISTINCT
+                        TRIM(`{source_col}`) AS id,
+                        COALESCE(TRIM(SOURCESYS), '') AS source,
+                        COALESCE(TRIM(SOURCETYPE), '') AS type
+                    FROM rstran
+                    WHERE `{source_col}` IS NOT NULL AND TRIM(`{source_col}`) <> ''
+
+                    UNION
+
+                    SELECT DISTINCT
+                        TRIM(TARGETNAME) AS id,
+                        '' AS source,
+                        COALESCE(TRIM(TARGETTYPE), '') AS type
+                    FROM rstran
+                    WHERE TARGETNAME IS NOT NULL AND TRIM(TARGETNAME) <> ''
+                ) q
+                WHERE q.id IS NOT NULL AND q.id <> ''
+                ORDER BY q.id, q.source, q.type
+                LIMIT {int(limit)}
                 """
             )
             mode = "default"
 
         rows = cur.fetchall()
+
+        ids = sorted({str(row.get("id") or "").strip() for row in rows if str(row.get("id") or "").strip()})
+        desc_map: dict[tuple[str, str, str], str] = {}
+        if ids:
+            placeholders = ", ".join(["%s"] * len(ids))
+            cur.execute(
+                f"""
+                SELECT BW_OBJECT, COALESCE(SOURCESYS, '') AS SOURCESYS, COALESCE(BW_OBJECT_TYPE, '') AS BW_OBJECT_TYPE, NAME_EN, NAME_DE
+                FROM bw_object_name
+                WHERE BW_OBJECT IN ({placeholders})
+                """,
+                tuple(ids),
+            )
+            for row in cur.fetchall():
+                desc = str(row.get("NAME_EN") or row.get("NAME_DE") or "").strip()
+                if not desc:
+                    continue
+                key_exact = (
+                    str(row.get("BW_OBJECT") or "").strip(),
+                    str(row.get("SOURCESYS") or "").strip(),
+                    str(row.get("BW_OBJECT_TYPE") or "").strip(),
+                )
+                key_no_source = (key_exact[0], "", key_exact[2])
+                key_no_type = (key_exact[0], key_exact[1], "")
+                key_loose = (key_exact[0], "", "")
+                desc_map.setdefault(key_exact, desc)
+                desc_map.setdefault(key_no_source, desc)
+                desc_map.setdefault(key_no_type, desc)
+                desc_map.setdefault(key_loose, desc)
     finally:
         cur.close()
         conn.close()
 
     items = []
     for row in rows:
-        bw_object = str(row.get("BW_OBJECT") or "")
-        source_sys = str(row.get("SOURCESYS") or "")
-        bw_type = str(row.get("BW_OBJECT_TYPE") or "")
-        object_name = str(row.get("NAME_EN") or row.get("NAME_DE") or "")
+        bw_object = str(row.get("id") or "").strip()
+        source_sys = str(row.get("source") or "").strip()
+        bw_type = str(row.get("type") or "").strip()
+        object_name = desc_map.get((bw_object, source_sys, bw_type)) or desc_map.get((bw_object, "", bw_type)) or desc_map.get((bw_object, source_sys, "")) or desc_map.get((bw_object, "", "")) or ""
         items.append(
             {
                 "type": bw_type,
@@ -1979,6 +2077,14 @@ def search_more_bw_object_name(keyword: str = Query(default="")) -> Dict[str, ob
                 "desc": object_name,
             }
         )
+
+    return mode, items
+
+
+@app.get("/api/search-more/bw-object-name")
+def search_more_bw_object_name(keyword: str = Query(default="")) -> Dict[str, object]:
+    kw = (keyword or "").strip()
+    mode, items = fetch_searchable_bw_objects(kw, 100)
 
     return {
         "mode": mode,
@@ -1993,40 +2099,7 @@ def search_bw_object_name(keyword: str = Query(default="")) -> Dict[str, object]
     kw = (keyword or "").strip()
     if len(kw) < 3:
         return {"mode": "history", "keyword": kw, "count": 0, "items": []}
-
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        like_kw = f"%{kw}%"
-        cur.execute(
-            """
-            SELECT BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE, NAME_EN, NAME_DE
-            FROM bw_object_name
-            WHERE BW_OBJECT LIKE %s
-               OR NAME_EN LIKE %s
-               OR NAME_DE LIKE %s
-               OR SOURCESYS LIKE %s
-               OR BW_OBJECT_TYPE LIKE %s
-            ORDER BY BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE
-            LIMIT 5
-            """,
-            (like_kw, like_kw, like_kw, like_kw, like_kw),
-        )
-        rows = cur.fetchall()
-    finally:
-        cur.close()
-        conn.close()
-
-    items = []
-    for row in rows:
-        items.append(
-            {
-                "type": str(row.get("BW_OBJECT_TYPE") or ""),
-                "id": str(row.get("BW_OBJECT") or ""),
-                "source": str(row.get("SOURCESYS") or ""),
-                "desc": str(row.get("NAME_EN") or row.get("NAME_DE") or ""),
-            }
-        )
+    _, items = fetch_searchable_bw_objects(kw, 5)
 
     return {
         "mode": "search",
