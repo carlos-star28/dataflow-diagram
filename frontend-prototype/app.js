@@ -1842,12 +1842,12 @@
     return resp.json();
   }
 
-  async function executeImport({ tableName, mapping, sheetName, file, duplicateMode = "fail" }) {
+  async function executeImport({ tableName, mapping, sheetName, file, duplicateMode = "fail", headerRowNum = getHeaderRowNumber() }) {
     const formData = new FormData();
     formData.append("table_name", tableName);
     formData.append("mapping_json", JSON.stringify(mapping));
     formData.append("sheet_name", sheetName || "");
-    formData.append("header_row_num", String(getHeaderRowNumber()));
+    formData.append("header_row_num", String(Math.max(1, Number(headerRowNum) || 1)));
     formData.append("duplicate_mode", duplicateMode);
     formData.append("file", file);
 
@@ -2044,7 +2044,7 @@
   async function buildImportPayloadByHeaderRow(file, sheetName, headerRowNumber) {
     const headerRow = Math.max(1, Number(headerRowNumber) || 1);
     if (headerRow <= 1) {
-      return { file, sheetName: sheetName || "", transformed: false };
+      return { file, sheetName: sheetName || "", headerRowNum: headerRow, transformed: false };
     }
 
     const fileName = String(file?.name || "").toLowerCase();
@@ -2062,7 +2062,7 @@
       const csvText = rowsToCsv(sliced);
       const baseName = String(file.name || "import").replace(/\.[^.]+$/, "");
       const rebuiltFile = new File([csvText], `${baseName}_header${headerRow}.csv`, { type: "text/csv;charset=utf-8" });
-      return { file: rebuiltFile, sheetName: "", transformed: true };
+      return { file: rebuiltFile, sheetName: "", headerRowNum: 1, transformed: true };
     }
 
     if ((fileName.endsWith(".xlsx") || fileName.endsWith(".xls")) && window.XLSX) {
@@ -2085,10 +2085,10 @@
       const rebuiltFile = new File([csvText], `${baseName}_${targetSheet || "sheet"}_header${headerRow}.csv`, {
         type: "text/csv;charset=utf-8"
       });
-      return { file: rebuiltFile, sheetName: "", transformed: true };
+      return { file: rebuiltFile, sheetName: "", headerRowNum: 1, transformed: true };
     }
 
-    return { file, sheetName: sheetName || "", transformed: false };
+    return { file, sheetName: sheetName || "", headerRowNum: headerRow, transformed: false };
   }
 
   function autoDetectHeaderRow(rows, tableName) {
@@ -2385,6 +2385,7 @@
           mapping,
           sheetName: payload.sheetName,
           file: payload.file,
+          headerRowNum: payload.headerRowNum,
           duplicateMode: "fail"
         });
         await refreshImportCardTimes();
@@ -2414,6 +2415,7 @@
               mapping,
               sheetName: payload.sheetName,
               file: payload.file,
+              headerRowNum: payload.headerRowNum,
               duplicateMode: "continue"
             });
             await refreshImportCardTimes();
