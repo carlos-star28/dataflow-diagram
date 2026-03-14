@@ -2024,6 +2024,73 @@
     return { headers, rowCount };
   }
 
+  function rowsToCsv(rows) {
+    return (Array.isArray(rows) ? rows : [])
+      .map((row) => {
+        const cols = Array.isArray(row) ? row : [];
+        return cols
+          .map((cell) => {
+            const text = String(cell == null ? "" : cell);
+            if (/[",\n\r]/.test(text)) {
+              return `"${text.replace(/"/g, '""')}"`;
+            }
+            return text;
+          })
+          .join(",");
+      })
+      .join("\n");
+  }
+
+  async function buildImportPayloadByHeaderRow(file, sheetName, headerRowNumber) {
+    const headerRow = Math.max(1, Number(headerRowNumber) || 1);
+    if (headerRow <= 1) {
+      return { file, sheetName: sheetName || "", transformed: false };
+    }
+
+    const fileName = String(file?.name || "").toLowerCase();
+    const headerIndex = headerRow - 1;
+
+    if (fileName.endsWith(".csv")) {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/);
+      const rows = lines.filter((line) => line.trim()).map((line) => line.split(","));
+      const sliced = rows.slice(headerIndex).filter((row) => Array.isArray(row) && row.some((cell) => String(cell || "").trim()));
+      if (sliced.length < 2) {
+        throw new Error(`导入失败：按标题行第${headerRow}行解析后，未读取到可导入数据行。`);
+      }
+
+      const csvText = rowsToCsv(sliced);
+      const baseName = String(file.name || "import").replace(/\.[^.]+$/, "");
+      const rebuiltFile = new File([csvText], `${baseName}_header${headerRow}.csv`, { type: "text/csv;charset=utf-8" });
+      return { file: rebuiltFile, sheetName: "", transformed: true };
+    }
+
+    if ((fileName.endsWith(".xlsx") || fileName.endsWith(".xls")) && window.XLSX) {
+      const buffer = await file.arrayBuffer();
+      const workbook = window.XLSX.read(buffer, { type: "array" });
+      const targetSheet = sheetName || workbook.SheetNames[0] || "";
+      const sheet = workbook.Sheets[targetSheet];
+      if (!sheet) {
+        throw new Error("导入失败：未找到已选择的Sheet，请重新选择后重试。");
+      }
+
+      const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
+      const sliced = rows.slice(headerIndex).filter((row) => Array.isArray(row) && row.some((cell) => String(cell || "").trim()));
+      if (sliced.length < 2) {
+        throw new Error(`导入失败：按标题行第${headerRow}行解析后，未读取到可导入数据行。`);
+      }
+
+      const csvText = rowsToCsv(sliced);
+      const baseName = String(file.name || "import").replace(/\.[^.]+$/, "");
+      const rebuiltFile = new File([csvText], `${baseName}_${targetSheet || "sheet"}_header${headerRow}.csv`, {
+        type: "text/csv;charset=utf-8"
+      });
+      return { file: rebuiltFile, sheetName: "", transformed: true };
+    }
+
+    return { file, sheetName: sheetName || "", transformed: false };
+  }
+
   function autoDetectHeaderRow(rows, tableName) {
     const list = Array.isArray(rows) ? rows : [];
     const dbFields = getVisibleDbFields(tableName);
@@ -2308,11 +2375,16 @@
         importTaskLock = true;
         setImportBusyState(true, "正在导入数据...");
         const sheetName = importSheetSelect && !importSheetSelect.disabled ? importSheetSelect.value : "";
+        const headerRowNumber = getHeaderRowNumber();
+        const payload = await buildImportPayloadByHeaderRow(selectedFile, sheetName, headerRowNumber);
+        if (payload.transformed && importProgressText) {
+          importProgressText.textContent = `已按标题行第${headerRowNumber}行重构文件，正在导入...`;
+        }
         const result = await executeImport({
           tableName: activeImportTable,
           mapping,
-          sheetName,
-          file: selectedFile,
+          sheetName: payload.sheetName,
+          file: payload.file,
           duplicateMode: "fail"
         });
         await refreshImportCardTimes();
@@ -2335,11 +2407,13 @@
               importProgressText.textContent = "检测到重复数据，正在自动去重后继续导入...";
             }
             const sheetName = importSheetSelect && !importSheetSelect.disabled ? importSheetSelect.value : "";
+            const headerRowNumber = getHeaderRowNumber();
+            const payload = await buildImportPayloadByHeaderRow(selectedFile, sheetName, headerRowNumber);
             const retryResult = await executeImport({
               tableName: activeImportTable,
               mapping,
-              sheetName,
-              file: selectedFile,
+              sheetName: payload.sheetName,
+              file: payload.file,
               duplicateMode: "continue"
             });
             await refreshImportCardTimes();
