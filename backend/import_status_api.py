@@ -1937,18 +1937,22 @@ def search_more_bw_object_name(keyword: str = Query(default="")) -> Dict[str, ob
             like_kw = f"%{kw}%"
             cur.execute(
                 """
-                SELECT BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE, NAME_EN
+                SELECT BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE, NAME_EN, NAME_DE
                 FROM bw_object_name
-                WHERE BW_OBJECT LIKE %s OR NAME_EN LIKE %s OR SOURCESYS LIKE %s
+                WHERE BW_OBJECT LIKE %s
+                   OR NAME_EN LIKE %s
+                   OR NAME_DE LIKE %s
+                   OR SOURCESYS LIKE %s
+                   OR BW_OBJECT_TYPE LIKE %s
                 ORDER BY BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE
                 """,
-                (like_kw, like_kw, like_kw),
+                (like_kw, like_kw, like_kw, like_kw, like_kw),
             )
             mode = "search"
         else:
             cur.execute(
                 """
-                SELECT BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE, NAME_EN
+                SELECT BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE, NAME_EN, NAME_DE
                 FROM bw_object_name
                 ORDER BY BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE
                 LIMIT 100
@@ -1966,7 +1970,7 @@ def search_more_bw_object_name(keyword: str = Query(default="")) -> Dict[str, ob
         bw_object = str(row.get("BW_OBJECT") or "")
         source_sys = str(row.get("SOURCESYS") or "")
         bw_type = str(row.get("BW_OBJECT_TYPE") or "")
-        object_name = str(row.get("NAME_EN") or "")
+        object_name = str(row.get("NAME_EN") or row.get("NAME_DE") or "")
         items.append(
             {
                 "type": bw_type,
@@ -1996,13 +2000,17 @@ def search_bw_object_name(keyword: str = Query(default="")) -> Dict[str, object]
         like_kw = f"%{kw}%"
         cur.execute(
             """
-            SELECT BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE, NAME_EN
+            SELECT BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE, NAME_EN, NAME_DE
             FROM bw_object_name
-            WHERE BW_OBJECT LIKE %s OR NAME_EN LIKE %s OR SOURCESYS LIKE %s
+            WHERE BW_OBJECT LIKE %s
+               OR NAME_EN LIKE %s
+               OR NAME_DE LIKE %s
+               OR SOURCESYS LIKE %s
+               OR BW_OBJECT_TYPE LIKE %s
             ORDER BY BW_OBJECT, SOURCESYS, BW_OBJECT_TYPE
             LIMIT 5
             """,
-            (like_kw, like_kw, like_kw),
+            (like_kw, like_kw, like_kw, like_kw, like_kw),
         )
         rows = cur.fetchall()
     finally:
@@ -2016,7 +2024,7 @@ def search_bw_object_name(keyword: str = Query(default="")) -> Dict[str, object]
                 "type": str(row.get("BW_OBJECT_TYPE") or ""),
                 "id": str(row.get("BW_OBJECT") or ""),
                 "source": str(row.get("SOURCESYS") or ""),
-                "desc": str(row.get("NAME_EN") or ""),
+                "desc": str(row.get("NAME_EN") or row.get("NAME_DE") or ""),
             }
         )
 
