@@ -58,6 +58,7 @@
   const textToggleBtn = document.getElementById("textToggle");
   const textToggleInput = document.getElementById("textToggleInput");
   const resetViewBtn = document.getElementById("resetView");
+  const hiddenToggleBtn = document.getElementById("hiddenToggleBtn");
   const backToSearchLink = document.querySelector('.topbar-actions a[href="./index.html"]');
   const flowTitleEl = document.querySelector(".flow-title");
 
@@ -156,6 +157,11 @@
   let activeFlowNodeId = "";
   let flowSettleTimer = null;
   let flowStatusTimer = null;
+  let hiddenObjectKeys = new Set();
+  let hiddenCountInCurrentView = 0;
+  let hiddenPreviewOpen = false;
+  let hiddenToastTimer = null;
+  let lastRenderContext = null;
 
   if (flowCanvas) {
     flowCanvas.style.minHeight = "62vh";
@@ -612,10 +618,75 @@
     };
   }
 
+  function normalizeHiddenObject(value) {
+    return String(value || "").trim().toUpperCase();
+  }
+
+  function normalizeHiddenSource(value) {
+    const txt = String(value || "").trim().toUpperCase();
+    return txt.length >= 3 ? txt : "";
+  }
+
+  function buildHiddenKey(bwObject, sourcesys) {
+    const objectPart = normalizeHiddenObject(bwObject);
+    if (!objectPart) return "";
+    const sourcePart = normalizeHiddenSource(sourcesys);
+    return `${objectPart}||${sourcePart}`;
+  }
+
+  function parseDatasourceSourceFromLine2(line2) {
+    return normalizeHiddenSource(String(line2 || "").replace(/^\[/, "").replace(/\]$/, "").trim());
+  }
+
+  function getNodeHiddenIdentity(node) {
+    const bwObject = normalizeHiddenObject(node?.id);
+    if (!bwObject) {
+      return { bwObject: "", sourcesys: "", key: "" };
+    }
+
+    let sourcesys = "";
+    if (normalizeTypeCategory(node?.type) === "datasource") {
+      const ds = splitDatasourceLabel(node);
+      if (ds?.line2) {
+        sourcesys = parseDatasourceSourceFromLine2(ds.line2);
+      }
+    }
+
+    return {
+      bwObject,
+      sourcesys,
+      key: buildHiddenKey(bwObject, sourcesys)
+    };
+  }
+
   function hideNodeContextMenu() {
     if (!nodeContextMenu) return;
     nodeContextMenu.classList.add("hidden");
     contextMenuPayload = null;
+  }
+
+  function showFlowToast(message) {
+    const text = String(message || "").trim();
+    if (!text) return;
+
+    let toast = document.getElementById("flowToast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = "flowToast";
+      toast.className = "flow-toast";
+      document.body.appendChild(toast);
+    }
+
+    toast.textContent = text;
+    toast.classList.add("show");
+
+    if (hiddenToastTimer) {
+      window.clearTimeout(hiddenToastTimer);
+    }
+    hiddenToastTimer = window.setTimeout(() => {
+      toast.classList.remove("show");
+      hiddenToastTimer = null;
+    }, 1900);
   }
 
   async function copyTextToClipboard(text) {
@@ -658,12 +729,193 @@
     hideNodeContextMenu();
   }
 
+  async function flowApiRequest(path, options = {}) {
+    let resp;
+    try {
+      resp = await fetch(`${flowApiBase}${path}`, {
+        credentials: "include",
+        ...options
+      });
+    } catch (networkErr) {
+      const err = new Error("network_error");
+      err.code = "network_error";
+      err.cause = networkErr;
+      throw err;
+    }
+
+    if (!resp.ok) {
+      let detail = "";
+      try {
+        const payload = await resp.json();
+        detail = String(payload?.detail || "").trim();
+      } catch {
+        try {
+          detail = String(await resp.text() || "").trim();
+        } catch {
+          detail = "";
+        }
+      }
+      const err = new Error(`status ${resp.status}${detail ? `: ${detail}` : ""}`);
+      err.status = resp.status;
+      err.detail = detail;
+      throw err;
+    }
+
+    if (resp.status === 204) {
+      return {};
+    }
+    return resp.json();
+  }
+
+  function normalizeApiErrorMessage(error) {
+    const detail = String(error?.detail || error?.message || "").trim();
+    const status = Number(error?.status || 0);
+    const normalized = detail.toLowerCase();
+    if (status === 404 || /not\s*fou?nd|not\s*fund/.test(normalized)) {
+      return "后端未找到隐藏对象接口，请先部署最新后端";
+    }
+    if (status === 401 || status === 403) {
+      return "登录状态失效，请重新登录后重试";
+    }
+    return detail || "请稍后重试";
+  }
+
+  async function loadHiddenObjectKeys() {
+    const payload = await flowApiRequest("/flow/hidden-objects");
+    const rows = Array.isArray(payload?.items) ? payload.items : [];
+    hiddenObjectKeys = new Set(
+      rows
+        .map((row) => buildHiddenKey(row?.bw_object, row?.sourcesys))
+        .filter(Boolean)
+    );
+  }
+
+  async function addHiddenObject(bwObject, sourcesys) {
+    return flowApiRequest("/flow/hidden-objects", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        bw_object: normalizeHiddenObject(bwObject),
+        sourcesys: normalizeHiddenSource(sourcesys)
+      })
+    });
+  }
+
+  async function removeHiddenObject(bwObject, sourcesys) {
+    const query = new URLSearchParams({
+      bw_object: normalizeHiddenObject(bwObject),
+      sourcesys: normalizeHiddenSource(sourcesys)
+    });
+    return flowApiRequest(`/flow/hidden-objects?${query.toString()}`, {
+      method: "DELETE"
+    });
+  }
+
+  function updateHiddenToggleButtonState() {
+    if (!hiddenToggleBtn) return;
+    hiddenToggleBtn.textContent = hiddenPreviewOpen ? "关闭隐藏对象" : "打开隐藏对象";
+    hiddenToggleBtn.classList.toggle("is-active", hiddenPreviewOpen);
+  }
+
+  function applyHiddenVisibilityToRenderedGraph(options = {}) {
+    if (!lastRenderContext) return 0;
+
+    const { edges, nodePos, nodeSize, hiddenNodeIds } = lastRenderContext;
+    const forceHideNodeIds = new Set(Array.isArray(options.forceHideNodeIds) ? options.forceHideNodeIds : []);
+    const forceShowNodeIds = new Set(Array.isArray(options.forceShowNodeIds) ? options.forceShowNodeIds : []);
+    hiddenCountInCurrentView = hiddenNodeIds.size;
+    if (!hiddenCountInCurrentView) {
+      hiddenPreviewOpen = false;
+    }
+
+    const visibleNodeIds = new Set();
+    const nodeEls = [...flowNodes.querySelectorAll(".node")];
+
+    nodeEls.forEach((el) => {
+      const id = String(el.dataset.id || "").trim();
+      if (!id) return;
+      const isHidden = hiddenNodeIds.has(id);
+      const visible = forceHideNodeIds.has(id)
+        ? false
+        : forceShowNodeIds.has(id)
+          ? true
+          : (!isHidden || hiddenPreviewOpen);
+      el.dataset.isUserHidden = isHidden ? "1" : "0";
+      el.classList.toggle("user-hidden-node", isHidden);
+      el.classList.toggle("user-hidden-node-visible", isHidden && hiddenPreviewOpen);
+      el.style.display = visible ? "" : "none";
+      if (visible) {
+        visibleNodeIds.add(id);
+      }
+    });
+
+    flowNodes.querySelectorAll(".node-extra-text").forEach((textEl) => {
+      const id = String(textEl.dataset.id || "").trim();
+      textEl.style.display = visibleNodeIds.has(id) ? "" : "none";
+    });
+
+    const visibleEdges = edges.filter((e) => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target));
+    return renderEdgesFromRects(visibleEdges, (id) => {
+      if (!visibleNodeIds.has(id)) return null;
+      const p = nodePos.get(id);
+      if (!p) return null;
+      const s = nodeSize(id);
+      return { x: p.x, y: p.y, w: s.w, h: s.h };
+    });
+  }
+
+  async function toggleHiddenFromContextMenu() {
+    if (!contextMenuPayload) return;
+
+    const bwObject = normalizeHiddenObject(contextMenuPayload.bwObject);
+    const sourcesys = normalizeHiddenSource(contextMenuPayload.sourcesys);
+    const nodeId = String(contextMenuPayload.nodeId || "").trim();
+    const key = buildHiddenKey(bwObject, sourcesys);
+    if (!key) {
+      hideNodeContextMenu();
+      return;
+    }
+
+    const currentlyHidden = hiddenObjectKeys.has(key);
+    try {
+      if (currentlyHidden) {
+        await removeHiddenObject(bwObject, sourcesys);
+        hiddenObjectKeys.delete(key);
+      } else {
+        await addHiddenObject(bwObject, sourcesys);
+        hiddenObjectKeys.add(key);
+      }
+    } catch (error) {
+      showFlowToast(`操作失败：${normalizeApiErrorMessage(error)}`);
+      hideNodeContextMenu();
+      return;
+    }
+
+    hideNodeContextMenu();
+    if (lastRenderContext?.hiddenNodeIds) {
+      if (currentlyHidden) {
+        lastRenderContext.hiddenNodeIds.delete(nodeId);
+        applyHiddenVisibilityToRenderedGraph({ forceShowNodeIds: nodeId ? [nodeId] : [] });
+      } else {
+        lastRenderContext.hiddenNodeIds.add(nodeId);
+        applyHiddenVisibilityToRenderedGraph({ forceHideNodeIds: nodeId ? [nodeId] : [] });
+      }
+      updateHiddenToggleButtonState();
+    } else {
+      buildGraphView(selectedTypes);
+    }
+    showFlowToast(currentlyHidden ? "已显示对象" : "已隐藏对象");
+  }
+
   function ensureNodeContextMenu() {
     if (nodeContextMenu) return;
 
     nodeContextMenu = document.createElement("div");
     nodeContextMenu.className = "node-context-menu hidden";
     nodeContextMenu.innerHTML = [
+      '<button type="button" class="node-context-menu-item" data-action="toggle-hidden"></button>',
       '<button type="button" class="node-context-menu-item" data-action="copy-both">复制技术名和名称</button>',
       '<button type="button" class="node-context-menu-item" data-action="copy-tech">复制技术名</button>',
       '<button type="button" class="node-context-menu-item" data-action="copy-name">复制名称</button>'
@@ -674,7 +926,9 @@
       const btn = event.target.closest(".node-context-menu-item");
       if (!btn) return;
       const action = btn.dataset.action;
-      if (action === "copy-tech") {
+      if (action === "toggle-hidden") {
+        toggleHiddenFromContextMenu();
+      } else if (action === "copy-tech") {
         copyNodeContextPayload("tech");
       } else if (action === "copy-name") {
         copyNodeContextPayload("name");
@@ -699,6 +953,15 @@
     ensureNodeContextMenu();
     if (!nodeContextMenu) return;
     contextMenuPayload = payload;
+
+    const toggleBtn = nodeContextMenu.querySelector('[data-action="toggle-hidden"]');
+    if (toggleBtn) {
+      const key = buildHiddenKey(payload?.bwObject, payload?.sourcesys);
+      const isHidden = key ? hiddenObjectKeys.has(key) : false;
+      toggleBtn.textContent = isHidden ? "显示" : "隐藏";
+      toggleBtn.style.display = key ? "block" : "none";
+    }
+
     nodeContextMenu.classList.remove("hidden");
 
     const rect = nodeContextMenu.getBoundingClientRect();
@@ -2119,6 +2382,14 @@
     const allNodeY = [...nodePos.values()].map((p) => p.y);
     const minNodeY = allNodeY.length ? Math.min(...allNodeY) : 0;
     const maxNodeY = allNodeY.length ? Math.max(...allNodeY) : 0;
+    const hiddenNodeIds = new Set();
+
+    nodeMeta.forEach((meta) => {
+      const identity = getNodeHiddenIdentity(meta.node);
+      if (identity.key && hiddenObjectKeys.has(identity.key)) {
+        hiddenNodeIds.add(meta.node.id);
+      }
+    });
 
     nodeMeta.forEach((meta) => {
       const pos = nodePos.get(meta.node.id);
@@ -2141,6 +2412,11 @@
       el.dataset.id = meta.node.id;
       el.dataset.techName = String(meta.node?.id || rawLabel || "");
       el.dataset.hoverText = String(meta.node?.object_name || "");
+      const identity = getNodeHiddenIdentity(meta.node);
+      el.dataset.hiddenBwObject = identity.bwObject;
+      el.dataset.hiddenSourcesys = identity.sourcesys;
+      el.dataset.hiddenKey = identity.key;
+      el.dataset.isUserHidden = hiddenNodeIds.has(meta.node.id) ? "1" : "0";
       if (isFocusNode(meta.node)) {
         el.classList.add("seed-focus");
         el.classList.add("seed-focus-label-below");
@@ -2612,12 +2888,14 @@
       tag.style.top = `${pos.y - textHeight}px`;
     });
 
-    const renderedEdgeCount = renderEdgesFromRects(edges, (id) => {
-      const p = nodePos.get(id);
-      if (!p) return null;
-      const s = nodeSize(id);
-      return { x: p.x, y: p.y, w: s.w, h: s.h };
-    });
+    lastRenderContext = {
+      edges,
+      nodePos,
+      nodeSize,
+      hiddenNodeIds
+    };
+    const renderedEdgeCount = applyHiddenVisibilityToRenderedGraph();
+    updateHiddenToggleButtonState();
 
     const renderedNodeCount = flowNodes.querySelectorAll(".node").length;
     if (renderedNodeCount !== nodes.length || renderedEdgeCount !== edges.length) {
@@ -2656,8 +2934,11 @@
         event.preventDefault();
         event.stopPropagation();
         showNodeContextMenu(event.clientX, event.clientY, {
+          nodeId: el.dataset.id,
           techName: el.dataset.techName,
-          hoverText: el.dataset.hoverText
+          hoverText: el.dataset.hoverText,
+          bwObject: el.dataset.hiddenBwObject,
+          sourcesys: el.dataset.hiddenSourcesys
         });
       });
 
@@ -3303,6 +3584,26 @@
     window.addEventListener("resize", fitToView);
   }
 
+  function setupHiddenToggleButton() {
+    if (!hiddenToggleBtn) return;
+    updateHiddenToggleButtonState();
+    hiddenToggleBtn.addEventListener("click", () => {
+      if (!hiddenCountInCurrentView) {
+        showFlowToast("无隐藏对象");
+        return;
+      }
+
+      hiddenPreviewOpen = !hiddenPreviewOpen;
+      updateHiddenToggleButtonState();
+      applyHiddenVisibilityToRenderedGraph();
+      if (hiddenPreviewOpen) {
+        showFlowToast(`显示${hiddenCountInCurrentView}个隐藏对象`);
+      } else {
+        showFlowToast(`隐藏了${hiddenCountInCurrentView}个对象`);
+      }
+    });
+  }
+
   function startBackgroundAnimation() {
     const canvas = document.getElementById("bgCanvas");
     const ctx = canvas.getContext("2d");
@@ -3382,7 +3683,11 @@
     setupBackHomeAction();
     const optionalFromParams = params.types.filter((type) => OPTIONAL_TYPES.includes(type));
     selectedTypes = params.types.length ? buildSelectedTypes(optionalFromParams) : getDefaultTypeList();
-    loadGraphData(params.start, params.mode, params.startSource, params.startType)
+    loadHiddenObjectKeys()
+      .catch(() => {
+        hiddenObjectKeys = new Set();
+      })
+      .then(() => loadGraphData(params.start, params.mode, params.startSource, params.startType))
       .then((status) => {
         if (!status) return;
         if (status.resolvedStartName) {
@@ -3446,6 +3751,7 @@
         setupMiniMapDrawer();
         setupLayoutSpreadControl();
         setupTextToggle();
+        setupHiddenToggleButton();
         setupViewportInteraction();
         fitToView();
         startBackgroundAnimation();

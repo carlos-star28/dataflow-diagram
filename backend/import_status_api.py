@@ -64,7 +64,7 @@ ALLOWED_TABLES = {"rstran", "bw_object_name"}
 
 # Use explicit duplicate-check fields where business rules differ from physical PK design.
 DUPLICATE_CHECK_FIELDS: Dict[str, List[str]] = {
-    "bw_object_name": ["BW_OBJECT", "SOURCESYS", "BW_OBJECT_TYPE"],
+    "bw_object_name": ["BW_OBJECT", "SOURCESYS"],
 }
 
 # Fields allowed to be empty during import key validation.
@@ -106,6 +106,11 @@ class AdminCreateUserRequest(BaseModel):
 
 class AdminResetPasswordRequest(BaseModel):
     new_password: str
+
+
+class HiddenObjectRequest(BaseModel):
+    bw_object: str
+    sourcesys: str = ""
 
 
 def utcnow() -> datetime:
@@ -203,6 +208,20 @@ def ensure_bw_object_name_schema() -> None:
     """
     conn = get_conn()
     cur = conn.cursor()
+
+    def ensure_bw_object_name_indexes() -> None:
+        cur.execute("SHOW INDEX FROM `bw_object_name` WHERE Key_name = 'idx_bw_object_lookup'")
+        if not cur.fetchall():
+            cur.execute(
+                "CREATE INDEX `idx_bw_object_lookup` ON `bw_object_name` (`BW_OBJECT`, `BW_OBJECT_TYPE`, `SOURCESYS`)"
+            )
+
+        cur.execute("SHOW INDEX FROM `bw_object_name` WHERE Key_name = 'idx_bw_object_sourcesys'")
+        if not cur.fetchall():
+            cur.execute(
+                "CREATE INDEX `idx_bw_object_sourcesys` ON `bw_object_name` (`BW_OBJECT`, `SOURCESYS`)"
+            )
+
     try:
         cur.execute(
             """
@@ -213,6 +232,19 @@ def ensure_bw_object_name_schema() -> None:
             (DB_CONFIG["database"],),
         )
         if int(cur.fetchone()[0]) == 0:
+            cur.execute(
+                """
+                CREATE TABLE `bw_object_name` (
+                  `BW_OBJECT` varchar(40) NOT NULL COMMENT 'BW object',
+                  `SOURCESYS` varchar(25) NULL COMMENT 'Source System',
+                  `BW_OBJECT_TYPE` varchar(20) NULL COMMENT 'BW object type',
+                  `NAME_EN` varchar(255) NULL COMMENT 'Object Name (EN)',
+                  `NAME_DE` varchar(255) NULL COMMENT 'Object Name (DE)',
+                  KEY `idx_bw_object_sourcesys` (`BW_OBJECT`, `SOURCESYS`),
+                  KEY `idx_bw_object_lookup` (`BW_OBJECT`, `BW_OBJECT_TYPE`, `SOURCESYS`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                """
+            )
             conn.commit()
             return
 
@@ -311,17 +343,9 @@ def ensure_bw_object_name_schema() -> None:
                 comment_sql = f" COMMENT '{escaped_comment}'" if column_comment is not None else ""
                 cur.execute(f"ALTER TABLE `bw_object_name` MODIFY COLUMN `SOURCESYS` {column_type} NULL{comment_sql}")
 
-                cur.execute("SHOW INDEX FROM `bw_object_name` WHERE Key_name = 'idx_bw_object_lookup'")
-                if not cur.fetchall():
-                    cur.execute(
-                        "CREATE INDEX `idx_bw_object_lookup` ON `bw_object_name` (`BW_OBJECT`, `BW_OBJECT_TYPE`, `SOURCESYS`)"
-                    )
+                ensure_bw_object_name_indexes()
         else:
-            cur.execute("SHOW INDEX FROM `bw_object_name` WHERE Key_name = 'idx_bw_object_lookup'")
-            if not cur.fetchall():
-                cur.execute(
-                    "CREATE INDEX `idx_bw_object_lookup` ON `bw_object_name` (`BW_OBJECT`, `BW_OBJECT_TYPE`, `SOURCESYS`)"
-                )
+            ensure_bw_object_name_indexes()
 
         conn.commit()
     finally:
@@ -451,6 +475,50 @@ def ensure_auth_tables() -> None:
                 (normalize_username(DEFAULT_ADMIN_USERNAME), hash_password(DEFAULT_ADMIN_PASSWORD)),
             )
             conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+
+def ensure_user_hidden_object_table() -> None:
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+                        CREATE TABLE IF NOT EXISTS `user_hidden_object` (
+              `bw_object` VARCHAR(40) NOT NULL COMMENT 'BW Object',
+                            `sourcesys` VARCHAR(25) NOT NULL DEFAULT '' COMMENT 'Source System',
+                            `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (`bw_object`, `sourcesys`)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户隐藏对象清单';
+            """
+        )
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'user_del_flag'
+            """,
+            (DB_CONFIG["database"],),
+        )
+        has_legacy_table = int(cur.fetchone()[0]) > 0
+
+        if has_legacy_table:
+            cur.execute(
+                """
+                INSERT IGNORE INTO `user_hidden_object` (`bw_object`, `sourcesys`)
+                SELECT
+                    UPPER(TRIM(`bw_object`)) AS bw_object,
+                    COALESCE(NULLIF(UPPER(TRIM(`sourcesys`)), ''), '') AS sourcesys
+                FROM `user_del_flag`
+                WHERE `bw_object` IS NOT NULL AND TRIM(`bw_object`) <> ''
+                """
+            )
+            cur.execute("DROP TABLE IF EXISTS `user_del_flag`")
+
+        conn.commit()
     finally:
         cur.close()
         conn.close()
@@ -631,7 +699,17 @@ def get_duplicate_check_fields(table_name: str) -> List[str]:
 def count_table_rows(table_name: str) -> int:
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(f"SELECT COUNT(*) FROM `{table_name}`")
+    if table_name == "bw_object_name":
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM `bw_object_name`
+            WHERE COALESCE(TRIM(`NAME_EN`), '') <> ''
+               OR COALESCE(TRIM(`NAME_DE`), '') <> ''
+            """
+        )
+    else:
+        cur.execute(f"SELECT COUNT(*) FROM `{table_name}`")
     value = int(cur.fetchone()[0])
     cur.close()
     conn.close()
@@ -643,6 +721,15 @@ def normalize_type_code(raw_type: str | None) -> str:
     if not txt:
         return "UNKNOWN"
     return txt
+
+
+def normalize_hidden_bw_object(raw: str | None) -> str:
+    return str(raw or "").strip().upper()
+
+
+def normalize_hidden_sourcesys(raw: str | None) -> str:
+    txt = str(raw or "").strip().upper()
+    return txt if len(txt) >= 3 else ""
 
 
 def _build_graph_engine_by_source(start_name: str, max_nodes: int = 2000, max_edges: int = 5000) -> Dict[str, object]:
@@ -1390,20 +1477,23 @@ def parse_upload_to_dataframe(
 
 
 def apply_rstran_logic(mapped_df: pd.DataFrame) -> pd.DataFrame:
-    if "SOURCENAME" not in mapped_df.columns:
-        return mapped_df
+    if "SOURCENAME" in mapped_df.columns:
+        split_vals = mapped_df["SOURCENAME"].astype(str).str.strip().str.split(r"\s+", n=1, expand=True)
+        first_part = split_vals[0].fillna("") if 0 in split_vals.columns else ""
+        second_part = split_vals[1].fillna("") if 1 in split_vals.columns else ""
 
-    split_vals = mapped_df["SOURCENAME"].astype(str).str.strip().str.split(r"\s+", n=1, expand=True)
-    first_part = split_vals[0].fillna("") if 0 in split_vals.columns else ""
-    second_part = split_vals[1].fillna("") if 1 in split_vals.columns else ""
+        if "SOURCE" in mapped_df.columns:
+            mapped_df["SOURCE"] = first_part
+        if "DATASOURCE" in mapped_df.columns:
+            # Compatibility with legacy schema/exports.
+            mapped_df["DATASOURCE"] = first_part
+        if "SOURCESYS" in mapped_df.columns:
+            mapped_df["SOURCESYS"] = second_part
 
-    if "SOURCE" in mapped_df.columns:
-        mapped_df["SOURCE"] = first_part
-    if "DATASOURCE" in mapped_df.columns:
-        # Compatibility with legacy schema/exports.
-        mapped_df["DATASOURCE"] = first_part
     if "SOURCESYS" in mapped_df.columns:
-        mapped_df["SOURCESYS"] = second_part
+        # Import rule: blank or too-short SOURCESYS should be treated as empty.
+        src = mapped_df["SOURCESYS"].fillna("").astype(str).str.strip()
+        mapped_df["SOURCESYS"] = src.where(src.str.len() >= 3, "")
 
     return mapped_df
 
@@ -1414,6 +1504,11 @@ def apply_bw_object_name_logic(mapped_df: pd.DataFrame) -> pd.DataFrame:
     for col in ("BW_OBJECT", "BW_OBJECT_TYPE", "NAME_EN", "NAME_DE", "SOURCESYS"):
         if col in mapped_df.columns:
             mapped_df[col] = mapped_df[col].astype(str).str.strip()
+
+    if "SOURCESYS" in mapped_df.columns:
+        # Keep SOURCESYS quality consistent with rstran import rule.
+        src = mapped_df["SOURCESYS"].fillna("").astype(str).str.strip()
+        mapped_df["SOURCESYS"] = src.where(src.str.len() >= 3, "")
 
     return mapped_df
 
@@ -1589,6 +1684,7 @@ def startup() -> None:
     ensure_rstran_schema()
     ensure_bw_object_name_schema()
     ensure_auth_tables()
+    ensure_user_hidden_object_table()
 
 
 @app.post("/api/auth/login")
@@ -1913,6 +2009,9 @@ def get_import_status() -> Dict[str, Dict[str, str | int]]:
     for table in ALLOWED_TABLES:
         response.setdefault(table, {"last_update": "--", "last_count": 0})
 
+    # Card count rule: bw_object_name should reflect rows with a non-empty NAME_EN/NAME_DE.
+    response["bw_object_name"]["last_count"] = count_table_rows("bw_object_name")
+
     return response
 
 
@@ -1926,139 +2025,62 @@ def upsert_import_status(payload: ImportStatusUpdate) -> Dict[str, str | int]:
     return {"table_name": table_name, "last_update": status["last_update"], "last_count": status["last_count"]}
 
 
+def _build_search_like_pattern(keyword: str) -> str:
+    kw = str(keyword or "").strip()
+    escaped = kw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    wildcard = escaped.replace("*", "%")
+    if "%" in wildcard:
+        return wildcard
+    return f"%{wildcard}%"
+
+
 def fetch_searchable_bw_objects(keyword: str, limit: int) -> tuple[str, list[dict[str, str]]]:
     kw = (keyword or "").strip()
-    rstran_cols = set(get_table_columns("rstran"))
-    source_col = "SOURCE" if "SOURCE" in rstran_cols else "DATASOURCE"
 
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
 
     try:
         if len(kw) >= 3:
-            like_kw = f"%{kw}%"
+            like_kw = _build_search_like_pattern(kw)
             cur.execute(
                 f"""
-                SELECT *
-                FROM (
-                    SELECT DISTINCT
-                        TRIM(BW_OBJECT) AS id,
-                        COALESCE(TRIM(SOURCESYS), '') AS source,
-                        COALESCE(TRIM(BW_OBJECT_TYPE), '') AS type
-                    FROM bw_object_name
-                    WHERE BW_OBJECT LIKE %s
-                       OR NAME_EN LIKE %s
-                       OR NAME_DE LIKE %s
-                       OR SOURCESYS LIKE %s
-                       OR BW_OBJECT_TYPE LIKE %s
-
-                    UNION
-
-                    SELECT DISTINCT
-                        TRIM(`{source_col}`) AS id,
-                        COALESCE(TRIM(SOURCESYS), '') AS source,
-                        COALESCE(TRIM(SOURCETYPE), '') AS type
-                    FROM rstran
-                    WHERE `{source_col}` IS NOT NULL
-                      AND TRIM(`{source_col}`) <> ''
-                      AND (
-                        `{source_col}` LIKE %s
-                        OR SOURCENAME LIKE %s
-                        OR SOURCESYS LIKE %s
-                        OR SOURCETYPE LIKE %s
-                      )
-
-                    UNION
-
-                    SELECT DISTINCT
-                        TRIM(TARGETNAME) AS id,
-                        '' AS source,
-                        COALESCE(TRIM(TARGETTYPE), '') AS type
-                    FROM rstran
-                    WHERE TARGETNAME IS NOT NULL
-                      AND TRIM(TARGETNAME) <> ''
-                      AND (
-                        TARGETNAME LIKE %s
-                        OR TARGETTYPE LIKE %s
-                      )
-                ) q
-                WHERE q.id IS NOT NULL AND q.id <> ''
-                ORDER BY q.id, q.source, q.type
+                SELECT DISTINCT
+                    TRIM(BW_OBJECT) AS id,
+                    COALESCE(TRIM(SOURCESYS), '') AS source,
+                    COALESCE(TRIM(BW_OBJECT_TYPE), '') AS type,
+                    COALESCE(NULLIF(TRIM(NAME_EN), ''), NULLIF(TRIM(NAME_DE), ''), '') AS object_desc
+                FROM bw_object_name
+                WHERE (
+                    BW_OBJECT LIKE %s ESCAPE '\\\\'
+                    OR NAME_EN LIKE %s ESCAPE '\\\\'
+                    OR NAME_DE LIKE %s ESCAPE '\\\\'
+                )
+                  AND BW_OBJECT IS NOT NULL
+                  AND TRIM(BW_OBJECT) <> ''
+                ORDER BY id, source, type
                 LIMIT {int(limit)}
                 """,
-                (
-                    like_kw, like_kw, like_kw, like_kw, like_kw,
-                    like_kw, like_kw, like_kw, like_kw,
-                    like_kw, like_kw,
-                ),
+                (like_kw, like_kw, like_kw),
             )
             mode = "search"
         else:
             cur.execute(
                 f"""
-                SELECT *
-                FROM (
-                    SELECT DISTINCT
-                        TRIM(BW_OBJECT) AS id,
-                        COALESCE(TRIM(SOURCESYS), '') AS source,
-                        COALESCE(TRIM(BW_OBJECT_TYPE), '') AS type
-                    FROM bw_object_name
-
-                    UNION
-
-                    SELECT DISTINCT
-                        TRIM(`{source_col}`) AS id,
-                        COALESCE(TRIM(SOURCESYS), '') AS source,
-                        COALESCE(TRIM(SOURCETYPE), '') AS type
-                    FROM rstran
-                    WHERE `{source_col}` IS NOT NULL AND TRIM(`{source_col}`) <> ''
-
-                    UNION
-
-                    SELECT DISTINCT
-                        TRIM(TARGETNAME) AS id,
-                        '' AS source,
-                        COALESCE(TRIM(TARGETTYPE), '') AS type
-                    FROM rstran
-                    WHERE TARGETNAME IS NOT NULL AND TRIM(TARGETNAME) <> ''
-                ) q
-                WHERE q.id IS NOT NULL AND q.id <> ''
-                ORDER BY q.id, q.source, q.type
+                SELECT DISTINCT
+                    TRIM(BW_OBJECT) AS id,
+                    COALESCE(TRIM(SOURCESYS), '') AS source,
+                    COALESCE(TRIM(BW_OBJECT_TYPE), '') AS type,
+                    COALESCE(NULLIF(TRIM(NAME_EN), ''), NULLIF(TRIM(NAME_DE), ''), '') AS object_desc
+                FROM bw_object_name
+                WHERE BW_OBJECT IS NOT NULL AND TRIM(BW_OBJECT) <> ''
+                ORDER BY id, source, type
                 LIMIT {int(limit)}
                 """
             )
             mode = "default"
 
         rows = cur.fetchall()
-
-        ids = sorted({str(row.get("id") or "").strip() for row in rows if str(row.get("id") or "").strip()})
-        desc_map: dict[tuple[str, str, str], str] = {}
-        if ids:
-            placeholders = ", ".join(["%s"] * len(ids))
-            cur.execute(
-                f"""
-                SELECT BW_OBJECT, COALESCE(SOURCESYS, '') AS SOURCESYS, COALESCE(BW_OBJECT_TYPE, '') AS BW_OBJECT_TYPE, NAME_EN, NAME_DE
-                FROM bw_object_name
-                WHERE BW_OBJECT IN ({placeholders})
-                """,
-                tuple(ids),
-            )
-            for row in cur.fetchall():
-                desc = str(row.get("NAME_EN") or row.get("NAME_DE") or "").strip()
-                if not desc:
-                    continue
-                key_exact = (
-                    str(row.get("BW_OBJECT") or "").strip(),
-                    str(row.get("SOURCESYS") or "").strip(),
-                    str(row.get("BW_OBJECT_TYPE") or "").strip(),
-                )
-                key_no_source = (key_exact[0], "", key_exact[2])
-                key_no_type = (key_exact[0], key_exact[1], "")
-                key_loose = (key_exact[0], "", "")
-                desc_map.setdefault(key_exact, desc)
-                desc_map.setdefault(key_no_source, desc)
-                desc_map.setdefault(key_no_type, desc)
-                desc_map.setdefault(key_loose, desc)
     finally:
         cur.close()
         conn.close()
@@ -2068,7 +2090,7 @@ def fetch_searchable_bw_objects(keyword: str, limit: int) -> tuple[str, list[dic
         bw_object = str(row.get("id") or "").strip()
         source_sys = str(row.get("source") or "").strip()
         bw_type = str(row.get("type") or "").strip()
-        object_name = desc_map.get((bw_object, source_sys, bw_type)) or desc_map.get((bw_object, "", bw_type)) or desc_map.get((bw_object, source_sys, "")) or desc_map.get((bw_object, "", "")) or ""
+        object_name = str(row.get("object_desc") or "").strip()
         items.append(
             {
                 "type": bw_type,
@@ -2198,6 +2220,90 @@ def flow_trace(
     }
 
 
+@app.get("/api/flow/hidden-objects")
+def list_hidden_objects() -> Dict[str, object]:
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+            SELECT bw_object, sourcesys
+            FROM user_hidden_object
+            ORDER BY bw_object, sourcesys
+            """
+        )
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+
+    items = [
+        {
+            "bw_object": str(r.get("bw_object") or "").strip(),
+            "sourcesys": str(r.get("sourcesys") or "").strip(),
+        }
+        for r in rows
+    ]
+    return {"count": len(items), "items": items}
+
+
+@app.post("/api/flow/hidden-objects")
+def add_hidden_object(payload: HiddenObjectRequest) -> Dict[str, object]:
+    bw_object = normalize_hidden_bw_object(payload.bw_object)
+    sourcesys = normalize_hidden_sourcesys(payload.sourcesys)
+    if not bw_object:
+        raise HTTPException(status_code=400, detail="bw_object 不能为空")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO user_hidden_object (bw_object, sourcesys)
+            VALUES (%s, %s)
+            ON DUPLICATE KEY UPDATE created_at = created_at
+            """,
+            (bw_object, sourcesys),
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    return {"ok": True, "bw_object": bw_object, "sourcesys": sourcesys}
+
+
+@app.delete("/api/flow/hidden-objects")
+def remove_hidden_object(
+    bw_object: str = Query(...),
+    sourcesys: str = Query(default=""),
+) -> Dict[str, object]:
+    normalized_bw_object = normalize_hidden_bw_object(bw_object)
+    normalized_sourcesys = normalize_hidden_sourcesys(sourcesys)
+    if not normalized_bw_object:
+        raise HTTPException(status_code=400, detail="bw_object 不能为空")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "DELETE FROM user_hidden_object WHERE bw_object = %s AND sourcesys = %s",
+            (normalized_bw_object, normalized_sourcesys),
+        )
+        deleted = int(cur.rowcount or 0)
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    return {
+        "ok": True,
+        "deleted": deleted,
+        "bw_object": normalized_bw_object,
+        "sourcesys": normalized_sourcesys,
+    }
+
+
 def sync_bw_object_name_from_rstran(cur) -> Dict[str, int]:
     """Upsert bw_object_name from rstran in two passes.
 
@@ -2241,8 +2347,7 @@ def sync_bw_object_name_from_rstran(cur) -> Dict[str, int]:
             JOIN ({subquery}) s
               ON b.`BW_OBJECT` <=> s.`BW_OBJECT`
              AND b.`SOURCESYS` <=> s.`SOURCESYS`
-             AND b.`BW_OBJECT_TYPE` <=> s.`BW_OBJECT_TYPE`
-            SET b.`NAME_EN` = COALESCE(NULLIF(TRIM(b.`NAME_EN`), ''), s.`BW_OBJECT`)
+            SET b.`BW_OBJECT_TYPE` = COALESCE(NULLIF(TRIM(b.`BW_OBJECT_TYPE`), ''), s.`BW_OBJECT_TYPE`)
             """
         )
         updated = int(cur.rowcount or 0)
@@ -2250,14 +2355,13 @@ def sync_bw_object_name_from_rstran(cur) -> Dict[str, int]:
         cur.execute(
             f"""
             INSERT INTO `bw_object_name` (`BW_OBJECT`, `SOURCESYS`, `BW_OBJECT_TYPE`, `NAME_EN`, `NAME_DE`)
-            SELECT s.`BW_OBJECT`, s.`SOURCESYS`, s.`BW_OBJECT_TYPE`, s.`BW_OBJECT`, NULL
+            SELECT s.`BW_OBJECT`, s.`SOURCESYS`, s.`BW_OBJECT_TYPE`, NULL, NULL
             FROM ({subquery}) s
             WHERE NOT EXISTS (
                 SELECT 1
                 FROM `bw_object_name` b
                 WHERE b.`BW_OBJECT` <=> s.`BW_OBJECT`
                   AND b.`SOURCESYS` <=> s.`SOURCESYS`
-                  AND b.`BW_OBJECT_TYPE` <=> s.`BW_OBJECT_TYPE`
             )
             """
         )
@@ -2451,6 +2555,18 @@ def execute_import(
             cur.executemany(insert_sql, insert_rows)
             inserted_count = len(insert_rows)
 
+        if table_name == "bw_object_name":
+            # Final safeguard: keep SOURCESYS normalized after import.
+            cur.execute(
+                """
+                UPDATE `bw_object_name`
+                SET `SOURCESYS` = ''
+                WHERE `SOURCESYS` IS NULL
+                   OR TRIM(`SOURCESYS`) = ''
+                   OR CHAR_LENGTH(TRIM(`SOURCESYS`)) < 3
+                """
+            )
+
         if table_name == "rstran":
             sync_stats = sync_bw_object_name_from_rstran(cur)
             bw_object_sync_inserted = int(sync_stats.get("inserted", 0))
@@ -2480,7 +2596,7 @@ def execute_import(
         cur.close()
         conn.close()
 
-    status = upsert_status(table_name, db_count)
+    status = upsert_status(table_name, count_table_rows(table_name))
     return {
         "table_name": table_name,
         "affected_rows": int(affected),
@@ -2494,4 +2610,34 @@ def execute_import(
         "last_update": status["last_update"],
         "last_count": status["last_count"],
         "message": "Import completed",
+    }
+
+
+@app.post("/api/import/clear-table")
+def clear_import_table(table_name: str = Form(...)) -> Dict[str, str | int]:
+    table_name = str(table_name or "").strip()
+    if table_name != "rstran":
+        raise HTTPException(status_code=400, detail="Only rstran supports clear-table in current workflow")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM `rstran`")
+        cur.execute("SELECT COUNT(*) FROM `rstran`")
+        db_count = int(cur.fetchone()[0])
+        conn.commit()
+    except mysql.connector.Error as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail="删除失败：数据库执行异常") from exc
+    finally:
+        cur.close()
+        conn.close()
+
+    status = upsert_status("rstran", db_count)
+    return {
+        "table_name": "rstran",
+        "db_count": int(db_count),
+        "last_update": status["last_update"],
+        "last_count": status["last_count"],
+        "message": "Clear completed",
     }

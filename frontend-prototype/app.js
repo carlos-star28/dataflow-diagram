@@ -93,6 +93,7 @@
   const importProgressBar = document.getElementById("importProgressBar");
   const importMapBody = document.getElementById("importMapBody");
   const autoMapBtn = document.getElementById("autoMapBtn");
+  const clearImportTableBtn = document.getElementById("clearImportTableBtn");
   const confirmImportBtn = document.getElementById("confirmImportBtn");
   const appToast = document.getElementById("appToast");
   const appToastText = document.getElementById("appToastText");
@@ -630,7 +631,7 @@
     if (importModalShell) {
       importModalShell.classList.toggle("is-busy", isBusy);
     }
-    [importFileInput, importSheetSelect, importHeaderRowSelect, autoMapBtn, confirmImportBtn].forEach((el) => {
+    [importFileInput, importSheetSelect, importHeaderRowSelect, autoMapBtn, clearImportTableBtn, confirmImportBtn].forEach((el) => {
       if (!el) return;
       el.disabled = isBusy;
     });
@@ -2071,12 +2072,15 @@
       const dbField = row.dataset.dbField || "";
       const fixedToggle = row.querySelector(".js-fixed-toggle");
       const fixedSelect = row.querySelector(".js-fixed-select");
+      const fixedInput = row.querySelector(".js-fixed-input");
       const excelSelect = row.querySelector(".js-excel-select");
 
       if (!dbField) return;
 
-      if (fixedToggle && fixedSelect && fixedToggle.checked) {
-        const fixedVal = String(fixedSelect.value || "").trim();
+      if (fixedToggle && fixedToggle.checked) {
+        const fixedVal = fixedInput
+          ? String(fixedInput.value || "").trim()
+          : String(fixedSelect?.value || "").trim();
         if (fixedVal) {
           mapping[dbField] = `__FIXED__:${fixedVal}`;
         }
@@ -2106,7 +2110,9 @@
     importMapBody.innerHTML = dbFields
       .map((dbField) => {
         const presetRaw = String(presetMap[dbField] || "");
-        const isFixedRow = activeImportTable === "bw_object_name" && dbField === "SOURCESYS";
+        const isSourceSysRow = activeImportTable === "bw_object_name" && dbField === "SOURCESYS";
+        const isBwObjectTypeRow = activeImportTable === "bw_object_name" && dbField === "BW_OBJECT_TYPE";
+        const isFixedRow = isSourceSysRow || isBwObjectTypeRow;
         const isFixed = isFixedRow && presetRaw.startsWith("__FIXED__:");
         const fixedVal = isFixed ? presetRaw.replace("__FIXED__:", "") : "";
         const selected = isFixed ? "" : presetRaw;
@@ -2115,6 +2121,11 @@
           .map((item) => `<option value="${escAttr(item)}" ${fixedVal === item ? "selected" : ""}>${esc(item)}</option>`)
           .join("");
         const rowClass = isFixed ? Boolean(fixedVal) : Boolean(selected);
+        const fixedControl = isBwObjectTypeRow
+          ? `<select class="js-fixed-select">${fixedOptions}</select>`
+          : isSourceSysRow
+            ? `<input type="text" class="js-fixed-input" value="${escAttr(fixedVal)}" placeholder="输入固定值" />`
+            : "";
 
         return `
           <tr data-db-field="${esc(dbField)}" class="${rowClass ? "mapped-row" : ""}">
@@ -2126,7 +2137,7 @@
             </td>
             <td>
               ${isFixedRow
-                ? `<div class="fixed-select-wrap ${isFixed ? "" : "hidden"}"><select class="js-fixed-select">${fixedOptions}</select></div>`
+                ? `<div class="fixed-select-wrap ${isFixed ? "" : "hidden"}">${fixedControl}</div>`
                 : ""}
               <div class="excel-select-wrap ${isFixed ? "hidden" : ""}"><select class="js-excel-select">${options}</select></div>
             </td>
@@ -2138,6 +2149,7 @@
     importMapBody.querySelectorAll("tr").forEach((row) => {
       const fixedToggle = row.querySelector(".js-fixed-toggle");
       const fixedSelect = row.querySelector(".js-fixed-select");
+      const fixedInput = row.querySelector(".js-fixed-input");
       const excelSelect = row.querySelector(".js-excel-select");
       const fixedWrap = row.querySelector(".fixed-select-wrap");
       const excelWrap = row.querySelector(".excel-select-wrap");
@@ -2146,7 +2158,10 @@
         const fixedOn = Boolean(fixedToggle?.checked);
         if (fixedWrap) fixedWrap.classList.toggle("hidden", !fixedOn);
         if (excelWrap) excelWrap.classList.toggle("hidden", fixedOn);
-        const hasValue = fixedOn ? Boolean(fixedSelect?.value) : Boolean(excelSelect?.value);
+        const fixedText = String(fixedInput?.value || "").trim();
+        const hasValue = fixedOn
+          ? Boolean(fixedText || fixedSelect?.value)
+          : Boolean(excelSelect?.value);
         row.classList.toggle("mapped-row", hasValue);
         renderMappingProgressMeta();
       };
@@ -2156,6 +2171,9 @@
       }
       if (fixedSelect) {
         fixedSelect.addEventListener("change", refreshRow);
+      }
+      if (fixedInput) {
+        fixedInput.addEventListener("input", refreshRow);
       }
       if (excelSelect) {
         excelSelect.addEventListener("change", refreshRow);
@@ -2387,6 +2405,9 @@
     if (confirmImportBtn) {
       confirmImportBtn.textContent = tableName === "bw_object_name" ? "更新" : "开始导入";
     }
+    if (clearImportTableBtn) {
+      clearImportTableBtn.classList.toggle("hidden", tableName !== "rstran");
+    }
     importMeta.innerHTML = "";
     importFileInput.value = "";
     if (importHeaderRowSelect) {
@@ -2534,6 +2555,37 @@
       const suggested = suggestMapping(dbFields, activeExcelHeaders);
       renderMappingRows(dbFields, activeExcelHeaders, suggested);
     });
+
+    if (clearImportTableBtn) {
+      clearImportTableBtn.addEventListener("click", async () => {
+        if (importTaskLock) return;
+        if (activeImportTable !== "rstran") return;
+        const ok = window.confirm("确认删除导入转换数据（rstran）中的全部数据吗？此操作不可撤销。");
+        if (!ok) return;
+
+        const form = new FormData();
+        form.append("table_name", "rstran");
+
+        try {
+          importTaskLock = true;
+          setImportBusyState(true, "正在删除全部数据...");
+          const resp = await apiFetch(`${importStatusApiBase}/import/clear-table`, {
+            method: "POST",
+            body: form
+          });
+          await refreshImportCardTimes();
+          const count = Number(resp?.db_count ?? 0);
+          showToast(`删除完成：rstran 当前数据条目 ${count}`);
+          completeImportBusyState();
+        } catch (err) {
+          const rawMsg = String(err?.message || "").trim();
+          showToast(`删除失败，请稍后重试。${rawMsg ? ` 详情: ${rawMsg}` : ""}`, "error");
+          setImportBusyState(false);
+        } finally {
+          importTaskLock = false;
+        }
+      });
+    }
 
     confirmImportBtn.addEventListener("click", async () => {
       if (importTaskLock) return;

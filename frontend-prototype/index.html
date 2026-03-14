@@ -57,7 +57,7 @@
         <div class="search-stack">
           <div class="search-wrap">
             <span class="icon">⌕</span>
-            <input id="searchInput" type="text" placeholder="Search, at least 3 chars" autocomplete="off" />
+            <input id="searchInput" type="text" placeholder="Minimum 3 characters, * wildcard supported" autocomplete="off" />
             <span id="selectedContextMeta" class="selected-context-meta hidden" aria-live="polite"></span>
             <button id="clearSearch" class="icon-btn" type="button" title="清除">✕</button>
           </div>
@@ -184,6 +184,7 @@
       </div>
 
       <div class="import-actions">
+        <button id="clearImportTableBtn" class="glass-btn danger-btn hidden" type="button">删除全部数据</button>
         <button id="confirmImportBtn" class="glass-btn strong" type="button">开始导入</button>
       </div>
     </div>
