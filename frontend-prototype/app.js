@@ -164,6 +164,7 @@
   let importProgressValue = 0;
   let importTaskLock = false;
   let lastToastMessage = "";
+  let activeHeaderRowNumber = 1;
 
   async function apiFetch(url, options = {}, skipAuthGuard = false) {
     const opts = options || {};
@@ -1977,10 +1978,12 @@
     const statusText = isComplete
       ? `映射：${mapped}/${total} 字段已满足`
       : `映射：${unmapped}个字段未映射`;
+    const detectText = `识别信息：字段名行=第${activeHeaderRowNumber}行 | 数据行数=${activeImportDataRowCount}`;
     const logicText = logicRuleDesc[activeImportTable] || "";
 
     importMeta.innerHTML = `
       <div class="import-meta-status ${isComplete ? "complete" : "incomplete"}">${esc(statusText)}</div>
+      <div class="import-meta-logic">${esc(detectText)}</div>
       ${logicText ? `<div class="import-meta-logic">${esc(logicText)}</div>` : ""}
     `;
   }
@@ -2060,6 +2063,7 @@
 
     activeExcelHeaders = headers;
     activeImportDataRowCount = Math.max(0, Number(rowCount) || 0);
+    activeHeaderRowNumber = getHeaderRowNumber();
     if (!headers.length) {
       importMeta.innerHTML = "";
       importMapBody.innerHTML = "";
@@ -2074,6 +2078,7 @@
     activeImportTable = tableName;
     activeExcelHeaders = [];
     activeImportDataRowCount = 0;
+    activeHeaderRowNumber = 1;
     importTaskLock = false;
     resetImportProgress();
     importModalTitle.textContent = `字段映射 - ${tableName}`;
