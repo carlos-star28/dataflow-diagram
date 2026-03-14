@@ -47,5 +47,7 @@ echo "[entrypoint] Ensuring tables..."
 python /app/scripts/create_rstran_table.py
 python /app/scripts/create_bw_object_name_table.py
 
-echo "[entrypoint] Starting API on :8000"
-exec uvicorn backend.import_status_api:app --host 0.0.0.0 --port 8000
+APP_PORT="${PORT:-8000}"
+
+echo "[entrypoint] Starting API on :${APP_PORT}"
+exec uvicorn backend.import_status_api:app --host 0.0.0.0 --port "$APP_PORT"
