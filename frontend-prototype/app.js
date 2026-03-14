@@ -1980,12 +1980,12 @@
     const statusText = isComplete
       ? `映射：${mapped}/${total} 字段已满足`
       : `映射：${unmapped}个字段未映射`;
-    const detectText = `识别信息：字段名行=第${activeHeaderRowNumber}行 | 数据行数=${activeImportDataRowCount}`;
+    const detectText = `识别信息：标题行=第${activeHeaderRowNumber}行｜数据行数=${activeImportDataRowCount}`;
     const logicText = logicRuleDesc[activeImportTable] || "";
 
     importMeta.innerHTML = `
-      <div class="import-meta-status ${isComplete ? "complete" : "incomplete"}">${esc(statusText)}</div>
       <div class="import-meta-logic">${esc(detectText)}</div>
+      <div class="import-meta-status ${isComplete ? "complete" : "incomplete"}">${esc(statusText)}</div>
       ${logicText ? `<div class="import-meta-logic">${esc(logicText)}</div>` : ""}
     `;
   }
