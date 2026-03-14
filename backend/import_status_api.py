@@ -2272,6 +2272,11 @@ def execute_import(
     # Normalize empty-like values to SQL NULL and trim text safely.
     mapped_df = mapped_df.apply(lambda col: col.map(normalize_cell))
 
+    # Business rule: SOURCESYS is allowed to be empty for bw_object_name.
+    # Some existing DB schemas still keep SOURCESYS as NOT NULL, so store empty as "" for compatibility.
+    if table_name == "bw_object_name" and "SOURCESYS" in mapped_df.columns:
+        mapped_df["SOURCESYS"] = mapped_df["SOURCESYS"].map(lambda v: "" if v is None else v)
+
     for col in db_columns:
         max_len = col_lens.get(col)
         mapped_df[col] = mapped_df[col].map(lambda v: clamp_to_length(v, max_len))
