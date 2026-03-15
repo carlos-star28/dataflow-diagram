@@ -212,6 +212,10 @@
     return message;
   }
 
+  function normalizeSearchKeyword(value) {
+    return String(value || "").toUpperCase();
+  }
+
   function isUnauthorizedError(error) {
     const message = String(error?.message || "");
     return /(?:^|\b)status 401\b|unauthorized|未登录|未认证|会话已过期/i.test(message);
@@ -759,7 +763,8 @@
   async function fetchTopSearchRows(keyword) {
     const key = (keyword || "").trim();
     if (key.length < 3) return [];
-    const resp = await apiFetch(`${importStatusApiBase}/search/bw-object-name?keyword=${encodeURIComponent(key)}`);
+    const normalizedKey = normalizeSearchKeyword(key).trim();
+    const resp = await apiFetch(`${importStatusApiBase}/search/bw-object-name?keyword=${encodeURIComponent(normalizedKey)}`);
     if (!resp.ok) {
       throw new Error(`status ${resp.status}`);
     }
@@ -820,7 +825,7 @@
     }
 
     const mapped = exact.map((row) => ({
-      id: normalizedStart,
+      id: String(row?.id || normalizedStart).trim() || normalizedStart,
       source: String(row?.source || "").trim(),
       type: String(row?.type || "").trim()
     }));
@@ -847,7 +852,7 @@
   }
 
   async function openFlowResult(startValue) {
-    const resolvedStart = (startValue || searchInput.value || "").trim();
+    const resolvedStart = normalizeSearchKeyword(startValue || searchInput.value || "").trim();
     if (!resolvedStart) {
       showToast("请先选择对象后再生成数据流图。", "error");
       searchInput.focus();
@@ -926,7 +931,7 @@
       }
       clearSearch.style.display = searchInput.value ? "inline-flex" : "none";
       if (searchInput.value.trim().length >= 3) {
-        void renderSearchResult(searchInput.value);
+        void renderSearchResult(searchInput.value.trim());
       } else {
         renderHistory();
       }
@@ -1100,7 +1105,7 @@
 
   async function fetchMoreRows(keyword, searchMode) {
     const kw = (keyword || "").trim();
-    const query = searchMode ? kw : "";
+    const query = searchMode ? normalizeSearchKeyword(kw).trim() : "";
     const resp = await apiFetch(`${importStatusApiBase}/search-more/bw-object-name?keyword=${encodeURIComponent(query)}`);
     if (!resp.ok) {
       throw new Error(`status ${resp.status}`);
@@ -1194,7 +1199,6 @@
         window.alert("请输入至少3个字符后再查找。默认仅展示前100条。");
         return;
       }
-      moreSearchBtn.classList.add("selected-outline");
       renderMoreTable(key, true);
     });
     moreSearchInput.addEventListener("keydown", (event) => {
@@ -1204,7 +1208,6 @@
           window.alert("请输入至少3个字符后再查找。默认仅展示前100条。");
           return;
         }
-        moreSearchBtn.classList.add("selected-outline");
         renderMoreTable(key, true);
       }
     });

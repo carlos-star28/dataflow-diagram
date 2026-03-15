@@ -121,6 +121,10 @@ def normalize_username(value: str) -> str:
     return str(value or "").strip().lower()
 
 
+def normalize_bw_object_lookup(value: str | None) -> str:
+    return str(value or "").strip().upper()
+
+
 def validate_password_strength(password: str) -> None:
     raw = str(password or "")
     if len(raw) < AUTH_PASSWORD_MIN_LEN:
@@ -222,6 +226,18 @@ def ensure_bw_object_name_schema() -> None:
                 "CREATE INDEX `idx_bw_object_sourcesys` ON `bw_object_name` (`BW_OBJECT`, `SOURCESYS`)"
             )
 
+        cur.execute("SHOW INDEX FROM `bw_object_name` WHERE Key_name = 'idx_bw_object_norm_lookup'")
+        if not cur.fetchall():
+            cur.execute(
+                "CREATE INDEX `idx_bw_object_norm_lookup` ON `bw_object_name` (`BW_OBJECT_NORM`, `BW_OBJECT_TYPE`, `SOURCESYS`)"
+            )
+
+        cur.execute("SHOW INDEX FROM `bw_object_name` WHERE Key_name = 'idx_bw_object_norm_sourcesys'")
+        if not cur.fetchall():
+            cur.execute(
+                "CREATE INDEX `idx_bw_object_norm_sourcesys` ON `bw_object_name` (`BW_OBJECT_NORM`, `SOURCESYS`)"
+            )
+
     try:
         cur.execute(
             """
@@ -236,12 +252,17 @@ def ensure_bw_object_name_schema() -> None:
                 """
                 CREATE TABLE `bw_object_name` (
                   `BW_OBJECT` varchar(40) NOT NULL COMMENT 'BW object',
+                                    `BW_OBJECT_NORM` varchar(40) NOT NULL COMMENT 'BW object normalized to uppercase',
                   `SOURCESYS` varchar(25) NULL COMMENT 'Source System',
                   `BW_OBJECT_TYPE` varchar(20) NULL COMMENT 'BW object type',
                   `NAME_EN` varchar(255) NULL COMMENT 'Object Name (EN)',
                   `NAME_DE` varchar(255) NULL COMMENT 'Object Name (DE)',
+                                    `NAME_EN_NORM` varchar(255) NULL COMMENT 'Object Name (EN) normalized to uppercase',
+                                    `NAME_DE_NORM` varchar(255) NULL COMMENT 'Object Name (DE) normalized to uppercase',
                   KEY `idx_bw_object_sourcesys` (`BW_OBJECT`, `SOURCESYS`),
-                  KEY `idx_bw_object_lookup` (`BW_OBJECT`, `BW_OBJECT_TYPE`, `SOURCESYS`)
+                                    KEY `idx_bw_object_lookup` (`BW_OBJECT`, `BW_OBJECT_TYPE`, `SOURCESYS`),
+                                    KEY `idx_bw_object_norm_sourcesys` (`BW_OBJECT_NORM`, `SOURCESYS`),
+                                    KEY `idx_bw_object_norm_lookup` (`BW_OBJECT_NORM`, `BW_OBJECT_TYPE`, `SOURCESYS`)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
                 """
             )
@@ -290,6 +311,45 @@ def ensure_bw_object_name_schema() -> None:
         )
         if int(cur.fetchone()[0]) == 0:
             cur.execute("ALTER TABLE `bw_object_name` ADD COLUMN `NAME_DE` VARCHAR(255) NULL")
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'bw_object_name' AND COLUMN_NAME = 'BW_OBJECT_NORM'
+            """,
+            (DB_CONFIG["database"],),
+        )
+        if int(cur.fetchone()[0]) == 0:
+            cur.execute(
+                "ALTER TABLE `bw_object_name` ADD COLUMN `BW_OBJECT_NORM` VARCHAR(40) NULL COMMENT 'BW object normalized to uppercase' AFTER `BW_OBJECT`"
+            )
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'bw_object_name' AND COLUMN_NAME = 'NAME_EN_NORM'
+            """,
+            (DB_CONFIG["database"],),
+        )
+        if int(cur.fetchone()[0]) == 0:
+            cur.execute(
+                "ALTER TABLE `bw_object_name` ADD COLUMN `NAME_EN_NORM` VARCHAR(255) NULL COMMENT 'Object Name (EN) normalized to uppercase' AFTER `NAME_EN`"
+            )
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'bw_object_name' AND COLUMN_NAME = 'NAME_DE_NORM'
+            """,
+            (DB_CONFIG["database"],),
+        )
+        if int(cur.fetchone()[0]) == 0:
+            cur.execute(
+                "ALTER TABLE `bw_object_name` ADD COLUMN `NAME_DE_NORM` VARCHAR(255) NULL COMMENT 'Object Name (DE) normalized to uppercase' AFTER `NAME_DE`"
+            )
 
         # If OBJECT_NAME still exists after migration, merge then drop.
         cur.execute(
@@ -346,6 +406,32 @@ def ensure_bw_object_name_schema() -> None:
                 ensure_bw_object_name_indexes()
         else:
             ensure_bw_object_name_indexes()
+
+        cur.execute(
+            """
+            UPDATE `bw_object_name`
+            SET
+              `BW_OBJECT_NORM` = UPPER(TRIM(COALESCE(`BW_OBJECT`, ''))),
+              `NAME_EN_NORM` = NULLIF(UPPER(TRIM(COALESCE(`NAME_EN`, ''))), ''),
+              `NAME_DE_NORM` = NULLIF(UPPER(TRIM(COALESCE(`NAME_DE`, ''))), '')
+            WHERE COALESCE(`BW_OBJECT_NORM`, '') <> UPPER(TRIM(COALESCE(`BW_OBJECT`, '')))
+               OR COALESCE(`NAME_EN_NORM`, '') <> COALESCE(NULLIF(UPPER(TRIM(COALESCE(`NAME_EN`, ''))), ''), '')
+               OR COALESCE(`NAME_DE_NORM`, '') <> COALESCE(NULLIF(UPPER(TRIM(COALESCE(`NAME_DE`, ''))), ''), '')
+            """
+        )
+
+        cur.execute(
+            """
+            UPDATE `bw_object_name`
+            SET `BW_OBJECT_NORM` = UPPER(TRIM(COALESCE(`BW_OBJECT`, '')))
+            WHERE `BW_OBJECT_NORM` IS NULL
+            """
+        )
+
+        try:
+            cur.execute("ALTER TABLE `bw_object_name` MODIFY COLUMN `BW_OBJECT_NORM` VARCHAR(40) NOT NULL COMMENT 'BW object normalized to uppercase'")
+        except mysql.connector.Error as exc:
+            print(f"[startup] Skip bw_object_name BW_OBJECT_NORM tighten on current DB engine: {exc}")
 
         conn.commit()
     finally:
@@ -831,19 +917,18 @@ def _build_graph_engine_by_source(start_name: str, max_nodes: int = 2000, max_ed
             placeholders = ",".join(["%s"] * len(batch))
             cur.execute(
                 f"""
-                SELECT BW_OBJECT, MAX(NAME_EN) AS NAME_EN
+                SELECT BW_OBJECT_NORM, MAX(NAME_EN) AS NAME_EN
                 FROM bw_object_name
-                WHERE BW_OBJECT IN ({placeholders})
-                GROUP BY BW_OBJECT
+                WHERE BW_OBJECT_NORM IN ({placeholders})
+                GROUP BY BW_OBJECT_NORM
                 """,
                 tuple(batch),
             )
             for bw_object, object_name in cur.fetchall():
-                key = str(bw_object or "").strip()
+                key = normalize_bw_object_lookup(bw_object)
                 value = str(object_name or "").strip()
                 if key and value:
                     node_object_names[key] = value
-                    node_object_names[key.upper()] = value
     finally:
         cur.close()
         conn.close()
@@ -1050,19 +1135,18 @@ def build_graph_both(start_name: str, max_nodes: int = 2000, max_edges: int = 50
             placeholders = ",".join(["%s"] * len(batch))
             cur.execute(
                 f"""
-                SELECT BW_OBJECT, MAX(NAME_EN) AS NAME_EN
+                SELECT BW_OBJECT_NORM, MAX(NAME_EN) AS NAME_EN
                 FROM bw_object_name
-                WHERE BW_OBJECT IN ({placeholders})
-                GROUP BY BW_OBJECT
+                WHERE BW_OBJECT_NORM IN ({placeholders})
+                GROUP BY BW_OBJECT_NORM
                 """,
                 tuple(batch),
             )
             for bw_object, object_name in cur.fetchall():
-                key = str(bw_object or "").strip()
+                key = normalize_bw_object_lookup(bw_object)
                 value = str(object_name or "").strip()
                 if key and value:
                     node_object_names[key] = value
-                    node_object_names[key.upper()] = value
     finally:
         cur.close()
         conn.close()
@@ -1218,19 +1302,18 @@ def build_graph_full(start_name: str, max_nodes: int = 2000, max_edges: int = 50
             placeholders = ",".join(["%s"] * len(batch))
             cur.execute(
                 f"""
-                SELECT BW_OBJECT, MAX(NAME_EN) AS NAME_EN
+                SELECT BW_OBJECT_NORM, MAX(NAME_EN) AS NAME_EN
                 FROM bw_object_name
-                WHERE BW_OBJECT IN ({placeholders})
-                GROUP BY BW_OBJECT
+                WHERE BW_OBJECT_NORM IN ({placeholders})
+                GROUP BY BW_OBJECT_NORM
                 """,
                 tuple(batch),
             )
             for bw_object, object_name in cur.fetchall():
-                key = str(bw_object or "").strip()
+                key = normalize_bw_object_lookup(bw_object)
                 value = str(object_name or "").strip()
                 if key and value:
                     node_object_names[key] = value
-                    node_object_names[key.upper()] = value
     finally:
         cur.close()
         conn.close()
@@ -1369,19 +1452,18 @@ def _build_graph_engine_by_target(start_name: str, max_nodes: int = 2000, max_ed
             placeholders = ",".join(["%s"] * len(batch))
             cur.execute(
                 f"""
-                SELECT BW_OBJECT, MAX(NAME_EN) AS NAME_EN
+                SELECT BW_OBJECT_NORM, MAX(NAME_EN) AS NAME_EN
                 FROM bw_object_name
-                WHERE BW_OBJECT IN ({placeholders})
-                GROUP BY BW_OBJECT
+                WHERE BW_OBJECT_NORM IN ({placeholders})
+                GROUP BY BW_OBJECT_NORM
                 """,
                 tuple(batch),
             )
             for bw_object, object_name in cur.fetchall():
-                key = str(bw_object or "").strip()
+                key = normalize_bw_object_lookup(bw_object)
                 value = str(object_name or "").strip()
                 if key and value:
                     node_object_names[key] = value
-                    node_object_names[key.upper()] = value
     finally:
         cur.close()
         conn.close()
@@ -1509,6 +1591,23 @@ def apply_bw_object_name_logic(mapped_df: pd.DataFrame) -> pd.DataFrame:
         # Keep SOURCESYS quality consistent with rstran import rule.
         src = mapped_df["SOURCESYS"].fillna("").astype(str).str.strip()
         mapped_df["SOURCESYS"] = src.where(src.str.len() >= 3, "")
+
+    if "BW_OBJECT" in mapped_df.columns and "BW_OBJECT_NORM" in mapped_df.columns:
+        mapped_df["BW_OBJECT_NORM"] = mapped_df["BW_OBJECT"].fillna("").astype(str).str.strip().str.upper()
+
+    if "NAME_EN_NORM" in mapped_df.columns:
+        if "NAME_EN" in mapped_df.columns:
+            mapped_df["NAME_EN_NORM"] = mapped_df["NAME_EN"].fillna("").astype(str).str.strip().str.upper()
+        else:
+            mapped_df["NAME_EN_NORM"] = ""
+        mapped_df.loc[mapped_df["NAME_EN_NORM"] == "", "NAME_EN_NORM"] = None
+
+    if "NAME_DE_NORM" in mapped_df.columns:
+        if "NAME_DE" in mapped_df.columns:
+            mapped_df["NAME_DE_NORM"] = mapped_df["NAME_DE"].fillna("").astype(str).str.strip().str.upper()
+        else:
+            mapped_df["NAME_DE_NORM"] = ""
+        mapped_df.loc[mapped_df["NAME_DE_NORM"] == "", "NAME_DE_NORM"] = None
 
     return mapped_df
 
@@ -2035,7 +2134,7 @@ def _build_search_like_pattern(keyword: str) -> str:
 
 
 def fetch_searchable_bw_objects(keyword: str, limit: int) -> tuple[str, list[dict[str, str]]]:
-    kw = (keyword or "").strip()
+    kw = normalize_bw_object_lookup(keyword)
 
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
@@ -2052,9 +2151,9 @@ def fetch_searchable_bw_objects(keyword: str, limit: int) -> tuple[str, list[dic
                     COALESCE(NULLIF(TRIM(NAME_EN), ''), NULLIF(TRIM(NAME_DE), ''), '') AS object_desc
                 FROM bw_object_name
                 WHERE (
-                    BW_OBJECT LIKE %s ESCAPE '\\\\'
-                    OR NAME_EN LIKE %s ESCAPE '\\\\'
-                    OR NAME_DE LIKE %s ESCAPE '\\\\'
+                    BW_OBJECT_NORM LIKE %s ESCAPE '\\'
+                    OR COALESCE(NAME_EN_NORM, '') LIKE %s ESCAPE '\\'
+                    OR COALESCE(NAME_DE_NORM, '') LIKE %s ESCAPE '\\'
                 )
                   AND BW_OBJECT IS NOT NULL
                   AND TRIM(BW_OBJECT) <> ''
@@ -2139,8 +2238,8 @@ def flow_trace(
     start_type: str = Query(default=""),
 ) -> Dict[str, object]:
     requested_mode = (mode or "").strip().lower()
-    normalized_start_name = (start_name or "").strip()
-    normalized_source = (start_source or "").strip()
+    normalized_start_name = normalize_bw_object_lookup(start_name)
+    normalized_source = normalize_bw_object_lookup(start_source)
     normalized_type = normalize_type_code(start_type)
 
     resolved_start_name = normalized_start_name
@@ -2158,7 +2257,10 @@ def flow_trace(
                 f"""
                 SELECT SOURCENAME
                 FROM rstran
-                WHERE {source_col} = %s AND SOURCESYS = %s AND SOURCENAME IS NOT NULL AND TRIM(SOURCENAME) <> ''
+                WHERE UPPER(TRIM({source_col})) = UPPER(%s)
+                  AND UPPER(TRIM(SOURCESYS)) = UPPER(%s)
+                  AND SOURCENAME IS NOT NULL
+                  AND TRIM(SOURCENAME) <> ''
                 ORDER BY TRANID
                 LIMIT 1
                 """,
@@ -2179,7 +2281,13 @@ def flow_trace(
             if not candidate:
                 continue
             cur.execute(
-                "SELECT 1 FROM rstran WHERE SOURCENAME = %s OR TARGETNAME = %s LIMIT 1",
+                """
+                SELECT 1
+                FROM rstran
+                WHERE UPPER(TRIM(SOURCENAME)) = UPPER(%s)
+                   OR UPPER(TRIM(TARGETNAME)) = UPPER(%s)
+                LIMIT 1
+                """,
                 (candidate, candidate),
             )
             if cur.fetchone():
@@ -2566,11 +2674,29 @@ def execute_import(
                    OR CHAR_LENGTH(TRIM(`SOURCESYS`)) < 3
                 """
             )
+            cur.execute(
+                """
+                UPDATE `bw_object_name`
+                SET
+                  `BW_OBJECT_NORM` = UPPER(TRIM(COALESCE(`BW_OBJECT`, ''))),
+                  `NAME_EN_NORM` = NULLIF(UPPER(TRIM(COALESCE(`NAME_EN`, ''))), ''),
+                  `NAME_DE_NORM` = NULLIF(UPPER(TRIM(COALESCE(`NAME_DE`, ''))), '')
+                """
+            )
 
         if table_name == "rstran":
             sync_stats = sync_bw_object_name_from_rstran(cur)
             bw_object_sync_inserted = int(sync_stats.get("inserted", 0))
             bw_object_sync_updated = int(sync_stats.get("updated", 0))
+            cur.execute(
+                """
+                UPDATE `bw_object_name`
+                SET
+                  `BW_OBJECT_NORM` = UPPER(TRIM(COALESCE(`BW_OBJECT`, ''))),
+                  `NAME_EN_NORM` = NULLIF(UPPER(TRIM(COALESCE(`NAME_EN`, ''))), ''),
+                  `NAME_DE_NORM` = NULLIF(UPPER(TRIM(COALESCE(`NAME_DE`, ''))), '')
+                """
+            )
 
         cur.execute(f"SELECT COUNT(*) FROM `{table_name}`")
         db_count = int(cur.fetchone()[0])
