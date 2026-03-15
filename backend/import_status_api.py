@@ -743,60 +743,6 @@ def get_table_columns(table_name: str) -> List[str]:
     return [r[0] for r in rows]
 
 
-def get_bw_object_name_norm_support() -> Dict[str, bool]:
-    columns = set(get_table_columns("bw_object_name"))
-    return {
-        "bw_object_norm": "BW_OBJECT_NORM" in columns,
-        "name_en_norm": "NAME_EN_NORM" in columns,
-        "name_de_norm": "NAME_DE_NORM" in columns,
-    }
-
-
-def refresh_bw_object_name_norm_columns(cur) -> None:
-    support = get_bw_object_name_norm_support()
-    if not support["bw_object_norm"]:
-        return
-
-    assignments = ["`BW_OBJECT_NORM` = UPPER(TRIM(COALESCE(`BW_OBJECT`, '')))"]
-    if support["name_en_norm"]:
-        assignments.append("`NAME_EN_NORM` = NULLIF(UPPER(TRIM(COALESCE(`NAME_EN`, ''))), '')")
-    if support["name_de_norm"]:
-        assignments.append("`NAME_DE_NORM` = NULLIF(UPPER(TRIM(COALESCE(`NAME_DE`, ''))), '')")
-
-    cur.execute(
-        f"""
-        UPDATE `bw_object_name`
-        SET {', '.join(assignments)}
-        """
-    )
-
-
-def enrich_node_object_names(cur, all_node_names: List[str], node_object_names: Dict[str, str]) -> None:
-    support = get_bw_object_name_norm_support()
-    lookup_expr = "BW_OBJECT_NORM" if support["bw_object_norm"] else "UPPER(TRIM(BW_OBJECT))"
-    batch_size = 500
-
-    for start in range(0, len(all_node_names), batch_size):
-        batch = [normalize_bw_object_lookup(v) for v in all_node_names[start : start + batch_size] if str(v).strip()]
-        if not batch:
-            continue
-        placeholders = ",".join(["%s"] * len(batch))
-        cur.execute(
-            f"""
-            SELECT {lookup_expr} AS LOOKUP_KEY, MAX(NAME_EN) AS NAME_EN
-            FROM bw_object_name
-            WHERE {lookup_expr} IN ({placeholders})
-            GROUP BY {lookup_expr}
-            """,
-            tuple(batch),
-        )
-        for bw_object, object_name in cur.fetchall():
-            key = normalize_bw_object_lookup(bw_object)
-            value = str(object_name or "").strip()
-            if key and value:
-                node_object_names[key] = value
-
-
 def get_table_column_lengths(table_name: str) -> Dict[str, int | None]:
     conn = get_conn()
     cur = conn.cursor()
@@ -963,7 +909,26 @@ def _build_graph_engine_by_source(start_name: str, max_nodes: int = 2000, max_ed
 
         # Enrich all discovered technical names with NAME_EN from bw_object_name.
         all_node_names = list(node_types.keys())
-        enrich_node_object_names(cur, all_node_names, node_object_names)
+        batch_size = 500
+        for start in range(0, len(all_node_names), batch_size):
+            batch = [str(v).strip().upper() for v in all_node_names[start : start + batch_size] if str(v).strip()]
+            if not batch:
+                continue
+            placeholders = ",".join(["%s"] * len(batch))
+            cur.execute(
+                f"""
+                SELECT BW_OBJECT_NORM, MAX(NAME_EN) AS NAME_EN
+                FROM bw_object_name
+                WHERE BW_OBJECT_NORM IN ({placeholders})
+                GROUP BY BW_OBJECT_NORM
+                """,
+                tuple(batch),
+            )
+            for bw_object, object_name in cur.fetchall():
+                key = normalize_bw_object_lookup(bw_object)
+                value = str(object_name or "").strip()
+                if key and value:
+                    node_object_names[key] = value
     finally:
         cur.close()
         conn.close()
@@ -1162,7 +1127,26 @@ def build_graph_both(start_name: str, max_nodes: int = 2000, max_edges: int = 50
                 break
 
         all_node_names = list(node_types.keys())
-        enrich_node_object_names(cur, all_node_names, node_object_names)
+        batch_size = 500
+        for start in range(0, len(all_node_names), batch_size):
+            batch = [str(v).strip().upper() for v in all_node_names[start : start + batch_size] if str(v).strip()]
+            if not batch:
+                continue
+            placeholders = ",".join(["%s"] * len(batch))
+            cur.execute(
+                f"""
+                SELECT BW_OBJECT_NORM, MAX(NAME_EN) AS NAME_EN
+                FROM bw_object_name
+                WHERE BW_OBJECT_NORM IN ({placeholders})
+                GROUP BY BW_OBJECT_NORM
+                """,
+                tuple(batch),
+            )
+            for bw_object, object_name in cur.fetchall():
+                key = normalize_bw_object_lookup(bw_object)
+                value = str(object_name or "").strip()
+                if key and value:
+                    node_object_names[key] = value
     finally:
         cur.close()
         conn.close()
@@ -1310,7 +1294,26 @@ def build_graph_full(start_name: str, max_nodes: int = 2000, max_edges: int = 50
 
         # Enrich object names for all discovered nodes.
         all_node_names = list(all_nodes)
-        enrich_node_object_names(cur, all_node_names, node_object_names)
+        batch_size = 500
+        for start in range(0, len(all_node_names), batch_size):
+            batch = [str(v).strip().upper() for v in all_node_names[start : start + batch_size] if str(v).strip()]
+            if not batch:
+                continue
+            placeholders = ",".join(["%s"] * len(batch))
+            cur.execute(
+                f"""
+                SELECT BW_OBJECT_NORM, MAX(NAME_EN) AS NAME_EN
+                FROM bw_object_name
+                WHERE BW_OBJECT_NORM IN ({placeholders})
+                GROUP BY BW_OBJECT_NORM
+                """,
+                tuple(batch),
+            )
+            for bw_object, object_name in cur.fetchall():
+                key = normalize_bw_object_lookup(bw_object)
+                value = str(object_name or "").strip()
+                if key and value:
+                    node_object_names[key] = value
     finally:
         cur.close()
         conn.close()
@@ -1441,7 +1444,26 @@ def _build_graph_engine_by_target(start_name: str, max_nodes: int = 2000, max_ed
                 break
 
         all_node_names = list(node_types.keys())
-        enrich_node_object_names(cur, all_node_names, node_object_names)
+        batch_size = 500
+        for start in range(0, len(all_node_names), batch_size):
+            batch = [str(v).strip().upper() for v in all_node_names[start : start + batch_size] if str(v).strip()]
+            if not batch:
+                continue
+            placeholders = ",".join(["%s"] * len(batch))
+            cur.execute(
+                f"""
+                SELECT BW_OBJECT_NORM, MAX(NAME_EN) AS NAME_EN
+                FROM bw_object_name
+                WHERE BW_OBJECT_NORM IN ({placeholders})
+                GROUP BY BW_OBJECT_NORM
+                """,
+                tuple(batch),
+            )
+            for bw_object, object_name in cur.fetchall():
+                key = normalize_bw_object_lookup(bw_object)
+                value = str(object_name or "").strip()
+                if key and value:
+                    node_object_names[key] = value
     finally:
         cur.close()
         conn.close()
@@ -2113,10 +2135,6 @@ def _build_search_like_pattern(keyword: str) -> str:
 
 def fetch_searchable_bw_objects(keyword: str, limit: int) -> tuple[str, list[dict[str, str]]]:
     kw = normalize_bw_object_lookup(keyword)
-    support = get_bw_object_name_norm_support()
-    bw_object_expr = "BW_OBJECT_NORM" if support["bw_object_norm"] else "UPPER(TRIM(BW_OBJECT))"
-    name_en_expr = "COALESCE(NAME_EN_NORM, '')" if support["name_en_norm"] else "UPPER(TRIM(COALESCE(NAME_EN, '')))"
-    name_de_expr = "COALESCE(NAME_DE_NORM, '')" if support["name_de_norm"] else "UPPER(TRIM(COALESCE(NAME_DE, '')))"
 
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
@@ -2133,9 +2151,9 @@ def fetch_searchable_bw_objects(keyword: str, limit: int) -> tuple[str, list[dic
                     COALESCE(NULLIF(TRIM(NAME_EN), ''), NULLIF(TRIM(NAME_DE), ''), '') AS object_desc
                 FROM bw_object_name
                 WHERE (
-                    {bw_object_expr} LIKE %s ESCAPE '\\'
-                    OR {name_en_expr} LIKE %s ESCAPE '\\'
-                    OR {name_de_expr} LIKE %s ESCAPE '\\'
+                    BW_OBJECT_NORM LIKE %s ESCAPE '\\\\'
+                    OR COALESCE(NAME_EN_NORM, '') LIKE %s ESCAPE '\\\\'
+                    OR COALESCE(NAME_DE_NORM, '') LIKE %s ESCAPE '\\\\'
                 )
                   AND BW_OBJECT IS NOT NULL
                   AND TRIM(BW_OBJECT) <> ''
@@ -2656,13 +2674,29 @@ def execute_import(
                    OR CHAR_LENGTH(TRIM(`SOURCESYS`)) < 3
                 """
             )
-                        refresh_bw_object_name_norm_columns(cur)
+            cur.execute(
+                """
+                UPDATE `bw_object_name`
+                SET
+                  `BW_OBJECT_NORM` = UPPER(TRIM(COALESCE(`BW_OBJECT`, ''))),
+                  `NAME_EN_NORM` = NULLIF(UPPER(TRIM(COALESCE(`NAME_EN`, ''))), ''),
+                  `NAME_DE_NORM` = NULLIF(UPPER(TRIM(COALESCE(`NAME_DE`, ''))), '')
+                """
+            )
 
         if table_name == "rstran":
             sync_stats = sync_bw_object_name_from_rstran(cur)
             bw_object_sync_inserted = int(sync_stats.get("inserted", 0))
             bw_object_sync_updated = int(sync_stats.get("updated", 0))
-                        refresh_bw_object_name_norm_columns(cur)
+            cur.execute(
+                """
+                UPDATE `bw_object_name`
+                SET
+                  `BW_OBJECT_NORM` = UPPER(TRIM(COALESCE(`BW_OBJECT`, ''))),
+                  `NAME_EN_NORM` = NULLIF(UPPER(TRIM(COALESCE(`NAME_EN`, ''))), ''),
+                  `NAME_DE_NORM` = NULLIF(UPPER(TRIM(COALESCE(`NAME_DE`, ''))), '')
+                """
+            )
 
         cur.execute(f"SELECT COUNT(*) FROM `{table_name}`")
         db_count = int(cur.fetchone()[0])
