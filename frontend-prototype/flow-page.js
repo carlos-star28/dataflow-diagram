@@ -58,6 +58,14 @@
   const textToggleBtn = document.getElementById("textToggle");
   const textToggleInput = document.getElementById("textToggleInput");
   const resetViewBtn = document.getElementById("resetView");
+  const graphSearchRoot = document.getElementById("graphSearch");
+  const graphSearchToggle = document.getElementById("graphSearchToggle");
+  const graphSearchInput = document.getElementById("graphSearchInput");
+  const graphSearchCount = document.getElementById("graphSearchCount");
+  const graphSearchPrev = document.getElementById("graphSearchPrev");
+  const graphSearchNext = document.getElementById("graphSearchNext");
+  const graphSearchClear = document.getElementById("graphSearchClear");
+  const logicMarkerToggleBtn = document.getElementById("logicMarkerToggleBtn");
   const hiddenToggleBtn = document.getElementById("hiddenToggleBtn");
   const backToSearchLink = document.querySelector('.topbar-actions a[href="./index.html"]');
   const flowTitleEl = document.querySelector(".flow-title");
@@ -130,6 +138,7 @@
   const ELK_CANVAS_PADDING = 64;
   const ELK_LAYER_SPACING = 72;
   const ELK_NODE_SPACING = 24;
+  const DATASOURCE_NEAR_LAYER_GAP_MULTIPLIER = 2;
   const FLOW_SETTLE_MS = 1200;
   const pointers = new Map();
   let dragStartX = 0;
@@ -162,6 +171,10 @@
   let hiddenPreviewOpen = false;
   let hiddenToastTimer = null;
   let lastRenderContext = null;
+  let graphSearchMatches = [];
+  let graphSearchCurrentIndex = -1;
+  let graphSearchOpen = false;
+  let logicMarkersVisible = true;
 
   if (flowCanvas) {
     flowCanvas.style.minHeight = "62vh";
@@ -279,6 +292,177 @@
 
   function normalizeNodeName(value) {
     return String(value || "").trim().toLowerCase();
+  }
+
+  function isRenderedNodeVisible(nodeEl) {
+    return !!nodeEl && nodeEl.style.display !== "none";
+  }
+
+  function getGraphSearchQuery() {
+    return normalizeNodeName(graphSearchInput?.value || "");
+  }
+
+  function getGraphSearchNodeText(nodeEl) {
+    const techName = normalizeNodeName(nodeEl?.dataset?.techName || "");
+    const hoverText = normalizeNodeName(nodeEl?.dataset?.hoverText || "");
+    return `${techName}\n${hoverText}`;
+  }
+
+  function updateGraphSearchUi() {
+    if (!graphSearchRoot || !graphSearchToggle) return;
+    graphSearchRoot.classList.toggle("collapsed", !graphSearchOpen);
+    graphSearchToggle.setAttribute("aria-expanded", graphSearchOpen ? "true" : "false");
+    graphSearchToggle.classList.toggle("is-active", graphSearchOpen || !!getGraphSearchQuery());
+
+    const total = graphSearchMatches.length;
+    const current = total > 0 && graphSearchCurrentIndex >= 0 ? graphSearchCurrentIndex + 1 : 0;
+    if (graphSearchCount) {
+      graphSearchCount.textContent = `${current} / ${total}`;
+    }
+    if (graphSearchPrev) {
+      graphSearchPrev.disabled = total < 2;
+    }
+    if (graphSearchNext) {
+      graphSearchNext.disabled = total < 2;
+    }
+    if (graphSearchClear) {
+      graphSearchClear.disabled = !String(graphSearchInput?.value || "").trim();
+    }
+  }
+
+  function clearGraphSearchHighlights() {
+    flowNodes.querySelectorAll(".node.search-match, .node.search-current").forEach((nodeEl) => {
+      nodeEl.classList.remove("search-match", "search-current");
+    });
+  }
+
+  function applyGraphSearchHighlights() {
+    clearGraphSearchHighlights();
+    graphSearchMatches.forEach((nodeEl) => nodeEl.classList.add("search-match"));
+    const currentNode = graphSearchMatches[graphSearchCurrentIndex];
+    if (currentNode) {
+      currentNode.classList.add("search-current");
+    }
+  }
+
+  function centerNodeInView(nodeEl) {
+    if (!nodeEl || !flowCanvas) return;
+    const rect = flowCanvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const left = Number.parseFloat(nodeEl.style.left || "0") || 0;
+    const top = Number.parseFloat(nodeEl.style.top || "0") || 0;
+    const width = nodeEl.offsetWidth || 110;
+    const height = nodeEl.offsetHeight || 34;
+
+    offsetX = rect.width / 2 - (left + width / 2) * scale;
+    offsetY = rect.height / 2 - (top + height / 2) * scale;
+    applyViewportTransform();
+  }
+
+  function setGraphSearchCurrentIndex(nextIndex, options = {}) {
+    const total = graphSearchMatches.length;
+    if (!total) {
+      graphSearchCurrentIndex = -1;
+      applyGraphSearchHighlights();
+      updateGraphSearchUi();
+      return;
+    }
+
+    const normalizedIndex = ((nextIndex % total) + total) % total;
+    graphSearchCurrentIndex = normalizedIndex;
+    applyGraphSearchHighlights();
+    updateGraphSearchUi();
+
+    if (options.focusCurrent !== false) {
+      centerNodeInView(graphSearchMatches[graphSearchCurrentIndex]);
+    }
+  }
+
+  function syncGraphSearchWithRenderedNodes(options = {}) {
+    const query = getGraphSearchQuery();
+    const previousNodeId = options.preserveCurrent !== false
+      ? String(graphSearchMatches[graphSearchCurrentIndex]?.dataset?.id || "").trim()
+      : "";
+
+    graphSearchMatches = [];
+    graphSearchCurrentIndex = -1;
+
+    if (!query) {
+      clearGraphSearchHighlights();
+      updateGraphSearchUi();
+      return 0;
+    }
+
+    const visibleNodes = [...flowNodes.querySelectorAll(".node")].filter(isRenderedNodeVisible);
+    graphSearchMatches = visibleNodes.filter((nodeEl) => getGraphSearchNodeText(nodeEl).includes(query));
+
+    if (!graphSearchMatches.length) {
+      clearGraphSearchHighlights();
+      updateGraphSearchUi();
+      return 0;
+    }
+
+    let nextIndex = 0;
+    if (previousNodeId) {
+      const preservedIndex = graphSearchMatches.findIndex((nodeEl) => String(nodeEl.dataset.id || "").trim() === previousNodeId);
+      if (preservedIndex >= 0) {
+        nextIndex = preservedIndex;
+      }
+    }
+
+    setGraphSearchCurrentIndex(nextIndex, { focusCurrent: options.focusCurrent !== false });
+    return graphSearchMatches.length;
+  }
+
+  function clearGraphSearch(options = {}) {
+    graphSearchMatches = [];
+    graphSearchCurrentIndex = -1;
+    if (graphSearchInput && options.clearInput !== false) {
+      graphSearchInput.value = "";
+    }
+    clearGraphSearchHighlights();
+    updateGraphSearchUi();
+  }
+
+  function applyLogicMarkerVisibility() {
+    if (!flowCanvas) return;
+    flowCanvas.classList.toggle("logic-markers-hidden", !logicMarkersVisible);
+    if (!logicMarkersVisible) {
+      hideNodeContextMenu();
+    }
+  }
+
+  function updateLogicMarkerToggleButtonState() {
+    if (!logicMarkerToggleBtn) return;
+    logicMarkerToggleBtn.classList.toggle("is-active", logicMarkersVisible);
+    logicMarkerToggleBtn.setAttribute("aria-pressed", logicMarkersVisible ? "true" : "false");
+    logicMarkerToggleBtn.textContent = logicMarkersVisible ? "隐藏有逻辑转换" : "显示有逻辑转换";
+  }
+
+  function setGraphSearchOpenState(open, options = {}) {
+    graphSearchOpen = !!open;
+    updateGraphSearchUi();
+    if (graphSearchOpen && options.focusInput !== false && graphSearchInput) {
+      window.requestAnimationFrame(() => {
+        graphSearchInput.focus();
+        graphSearchInput.select();
+      });
+    }
+    if (!graphSearchOpen && options.clearOnClose) {
+      clearGraphSearch({ clearInput: true });
+    }
+  }
+
+  function stepGraphSearch(direction) {
+    if (!graphSearchMatches.length) {
+      if (getGraphSearchQuery()) {
+        showFlowToast("未找到匹配节点");
+      }
+      return;
+    }
+    const baseIndex = graphSearchCurrentIndex >= 0 ? graphSearchCurrentIndex : 0;
+    setGraphSearchCurrentIndex(baseIndex + direction, { focusCurrent: true });
   }
 
   function isFocusNode(node) {
@@ -729,6 +913,48 @@
     hideNodeContextMenu();
   }
 
+  function normalizeLogicDetails(details) {
+    if (!Array.isArray(details)) return [];
+    return details
+      .map((detail) => ({
+        kind: String(detail?.kind || "").trim().toLowerCase(),
+        id: String(detail?.id || "").trim()
+      }))
+      .filter((detail) => detail.id);
+  }
+
+  function getLogicKindLabel(kind) {
+    if (kind === "start") return "STARTRoutine";
+    if (kind === "end") return "ENDRoutine";
+    if (kind === "expert") return "EXPERT";
+    return "转换ID";
+  }
+
+  function getEdgeLogicIds(edge) {
+    const ids = normalizeLogicDetails(edge?.logic_details).map((detail) => detail.id);
+    return [...new Set(ids.filter(Boolean))];
+  }
+
+  function getEdgeLogicTooltipText(edge) {
+    const details = normalizeLogicDetails(edge?.logic_details);
+    if (!details.length) return "";
+    return details.map((detail) => `${getLogicKindLabel(detail.kind)}: ${detail.id}`).join("\n");
+  }
+
+  async function copyTransformationIdsFromContextMenu() {
+    if (!contextMenuPayload) return;
+    const ids = Array.isArray(contextMenuPayload.tranIds)
+      ? [...new Set(contextMenuPayload.tranIds.map((id) => String(id || "").trim()).filter(Boolean))]
+      : [];
+    if (!ids.length) {
+      hideNodeContextMenu();
+      return;
+    }
+    await copyTextToClipboard(ids.join("\n"));
+    hideNodeContextMenu();
+    showFlowToast(ids.length > 1 ? "已复制转换ID列表" : "已复制转换ID");
+  }
+
   async function flowApiRequest(path, options = {}) {
     let resp;
     try {
@@ -857,13 +1083,15 @@
     });
 
     const visibleEdges = edges.filter((e) => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target));
-    return renderEdgesFromRects(visibleEdges, (id) => {
+    const renderedEdgeCount = renderEdgesFromRects(visibleEdges, (id) => {
       if (!visibleNodeIds.has(id)) return null;
       const p = nodePos.get(id);
       if (!p) return null;
       const s = nodeSize(id);
       return { x: p.x, y: p.y, w: s.w, h: s.h };
     });
+    syncGraphSearchWithRenderedNodes({ focusCurrent: false, preserveCurrent: true });
+    return renderedEdgeCount;
   }
 
   async function toggleHiddenFromContextMenu() {
@@ -918,7 +1146,8 @@
       '<button type="button" class="node-context-menu-item" data-action="toggle-hidden"></button>',
       '<button type="button" class="node-context-menu-item" data-action="copy-both">复制技术名和名称</button>',
       '<button type="button" class="node-context-menu-item" data-action="copy-tech">复制技术名</button>',
-      '<button type="button" class="node-context-menu-item" data-action="copy-name">复制名称</button>'
+      '<button type="button" class="node-context-menu-item" data-action="copy-name">复制名称</button>',
+      '<button type="button" class="node-context-menu-item" data-action="copy-transform-id">复制转换ID</button>'
     ].join("");
     document.body.appendChild(nodeContextMenu);
 
@@ -932,6 +1161,8 @@
         copyNodeContextPayload("tech");
       } else if (action === "copy-name") {
         copyNodeContextPayload("name");
+      } else if (action === "copy-transform-id") {
+        copyTransformationIdsFromContextMenu();
       } else {
         copyNodeContextPayload("both");
       }
@@ -955,11 +1186,28 @@
     contextMenuPayload = payload;
 
     const toggleBtn = nodeContextMenu.querySelector('[data-action="toggle-hidden"]');
+    const copyBothBtn = nodeContextMenu.querySelector('[data-action="copy-both"]');
+    const copyTechBtn = nodeContextMenu.querySelector('[data-action="copy-tech"]');
+    const copyNameBtn = nodeContextMenu.querySelector('[data-action="copy-name"]');
+    const copyTransformBtn = nodeContextMenu.querySelector('[data-action="copy-transform-id"]');
+    const isEdgeLogicMenu = String(payload?.kind || "").trim() === "edge-logic";
+
     if (toggleBtn) {
-      const key = buildHiddenKey(payload?.bwObject, payload?.sourcesys);
-      const isHidden = key ? hiddenObjectKeys.has(key) : false;
-      toggleBtn.textContent = isHidden ? "显示" : "隐藏";
-      toggleBtn.style.display = key ? "block" : "none";
+      if (isEdgeLogicMenu) {
+        toggleBtn.style.display = "none";
+      } else {
+        const key = buildHiddenKey(payload?.bwObject, payload?.sourcesys);
+        const isHidden = key ? hiddenObjectKeys.has(key) : false;
+        toggleBtn.textContent = isHidden ? "显示" : "隐藏";
+        toggleBtn.style.display = key ? "block" : "none";
+      }
+    }
+    if (copyBothBtn) copyBothBtn.style.display = isEdgeLogicMenu ? "none" : "block";
+    if (copyTechBtn) copyTechBtn.style.display = isEdgeLogicMenu ? "none" : "block";
+    if (copyNameBtn) copyNameBtn.style.display = isEdgeLogicMenu ? "none" : "block";
+    if (copyTransformBtn) {
+      const tranIds = Array.isArray(payload?.tranIds) ? payload.tranIds.filter((id) => String(id || "").trim()) : [];
+      copyTransformBtn.style.display = isEdgeLogicMenu && tranIds.length ? "block" : "none";
     }
 
     nodeContextMenu.classList.remove("hidden");
@@ -1147,6 +1395,46 @@
   function renderEdgesFromRects(edges, rectById) {
     flowEdges.innerHTML = edgeDefsMarkup();
     edgeRefsByNode = new Map();
+    flowNodes.querySelectorAll(".edge-logic-marker").forEach((markerEl) => markerEl.remove());
+
+    const appendEdgeLogicMarker = (centerX, centerY, edge) => {
+      const marker = document.createElement("span");
+      marker.className = "edge-logic-marker";
+      marker.setAttribute("aria-hidden", "true");
+      marker.style.left = `${centerX}px`;
+      marker.style.top = `${centerY}px`;
+      const tooltipText = getEdgeLogicTooltipText(edge);
+      if (tooltipText) {
+        marker.setAttribute("title", tooltipText);
+        marker.setAttribute("aria-label", tooltipText);
+      }
+
+      const icon = document.createElement("span");
+      icon.className = "edge-logic-marker-icon";
+      marker.appendChild(icon);
+
+      marker.addEventListener("contextmenu", (event) => {
+        const tranIds = Array.isArray(edge?.tran_ids)
+          ? [...new Set(edge.tran_ids.map((id) => String(id || "").trim()).filter(Boolean))]
+          : [];
+        if (!tranIds.length) return;
+        event.preventDefault();
+        event.stopPropagation();
+        showNodeContextMenu(event.clientX, event.clientY, {
+          kind: "edge-logic",
+          tranIds,
+        });
+      });
+
+      flowNodes.appendChild(marker);
+    };
+
+    const getLogicMarkerPoint = (x1, y1, x2, y2) => {
+      return {
+        x: (x1 + x2) / 2,
+        y: (y1 + y2) / 2,
+      };
+    };
 
     const addEdgeRef = (nodeId, ref) => {
       if (!edgeRefsByNode.has(nodeId)) {
@@ -1195,6 +1483,9 @@
         loop.setAttribute("marker-end", "url(#flowEdgeArrow)");
         loop.classList.add("flow-edge");
         flowEdges.appendChild(loop);
+        if (edge.has_logic) {
+          appendEdgeLogicMarker(startX + rx * 0.32, s.y + s.h / 2 - 2, edge);
+        }
         addEdgeRef(edge.source, { el: loop, source: edge.source, target: edge.target });
         renderedEdgeCount += 1;
         return;
@@ -1243,6 +1534,10 @@
       line.setAttribute("marker-end", "url(#flowEdgeArrow)");
       line.classList.add("flow-edge");
       flowEdges.appendChild(line);
+      if (edge.has_logic) {
+        const markerPoint = getLogicMarkerPoint(x1, y1, x2, y2);
+        appendEdgeLogicMarker(markerPoint.x, markerPoint.y, edge);
+      }
       const ref = { el: line, source: edge.source, target: edge.target };
       addEdgeRef(edge.source, ref);
       addEdgeRef(edge.target, ref);
@@ -2062,6 +2357,40 @@
       const qy = y1 + t * vy;
       return Math.hypot(px - qx, py - qy);
     };
+    const lineXAtY = (x1, y1, x2, y2, targetY) => {
+      const dy = y2 - y1;
+      if (Math.abs(dy) <= 0.0001) {
+        return (x1 + x2) / 2;
+      }
+      const t = (targetY - y1) / dy;
+      return x1 + (x2 - x1) * t;
+    };
+    const segmentIntersectsRect = (x1, y1, x2, y2, rect) => {
+      let t0 = 0;
+      let t1 = 1;
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const clip = (p, q) => {
+        if (Math.abs(p) <= 0.0001) {
+          return q >= 0;
+        }
+        const r = q / p;
+        if (p < 0) {
+          if (r > t1) return false;
+          if (r > t0) t0 = r;
+        } else {
+          if (r < t0) return false;
+          if (r < t1) t1 = r;
+        }
+        return true;
+      };
+
+      return clip(-dx, x1 - rect.left)
+        && clip(dx, rect.right - x1)
+        && clip(-dy, y1 - rect.top)
+        && clip(dy, rect.bottom - y1)
+        && t1 >= t0;
+    };
 
     const nodeIds = [...nodePos.keys()];
     const neighbors = new Map(nodeIds.map((id) => [id, new Set()]));
@@ -2121,8 +2450,8 @@
         });
       }
 
-      // Heuristic 2: if an edge passes through another node, nudge that node aside.
-      for (let pass = 0; pass < 3; pass += 1) {
+      // Heuristic 2: if an edge enters a node's padded rectangle, move the node outside the line corridor.
+      for (let pass = 0; pass < 4; pass += 1) {
         let moved = false;
         edges.forEach((edge) => {
           if (edge.source === edge.target) return;
@@ -2137,16 +2466,31 @@
             const p = nodePos.get(id);
             if (!p) return;
             if (hardLockX.has(id)) return;
-            const c = centerOf(p);
+            const size = layoutSize(id);
+            const c = { x: p.x + size.w / 2, y: p.y + size.h / 2 };
+            const avoidPadX = Math.max(10, Math.round(getEffectiveL1() * 0.14));
+            const avoidPadY = Math.max(6, Math.round(NODE_H * 0.18));
+            const paddedRect = {
+              left: p.x - avoidPadX,
+              right: p.x + size.w + avoidPadX,
+              top: p.y - avoidPadY,
+              bottom: p.y + size.h + avoidPadY
+            };
+
+            const crossesNodeRect = segmentIntersectsRect(sc.x, sc.y, tc.x, tc.y, paddedRect);
             const d = pointSegDistance(c.x, c.y, sc.x, sc.y, tc.x, tc.y);
-            const withinY = c.y >= Math.min(sc.y, tc.y) - NODE_H && c.y <= Math.max(sc.y, tc.y) + NODE_H;
-            if (d < NODE_H * 0.75 && withinY) {
-              const dir = c.x >= (sc.x + tc.x) / 2 ? 1 : -1;
-              const nextX = clampNodeX(p.x + dir * 24);
-              if (Math.abs(nextX - p.x) > 0.5) {
-                p.x = nextX;
-                moved = true;
-              }
+            const withinY = c.y >= Math.min(sc.y, tc.y) - size.h && c.y <= Math.max(sc.y, tc.y) + size.h;
+            if (!crossesNodeRect && !(d < size.h * 0.62 && withinY)) {
+              return;
+            }
+
+            const edgeXAtNodeY = lineXAtY(sc.x, sc.y, tc.x, tc.y, c.y);
+            const dir = c.x >= edgeXAtNodeY ? 1 : -1;
+            const targetCenterX = edgeXAtNodeY + dir * (size.w / 2 + avoidPadX + 4);
+            const nextX = clampNodeX(targetCenterX - size.w / 2, size.w);
+            if (Math.abs(nextX - p.x) > 0.5) {
+              p.x = nextX;
+              moved = true;
             }
           });
         });
@@ -2580,7 +2924,7 @@
 
       const gapX = Math.max(12, Math.round(getEffectiveL1() * 0.2));
       const rowGapY = Math.max(8, Math.round(NODE_H * 0.38));
-      let clusterGapY = Math.max(18, Math.round(NODE_H * 0.72));
+      let clusterGapY = Math.max(18, Math.round(NODE_H * 0.72)) * DATASOURCE_NEAR_LAYER_GAP_MULTIPLIER;
       const packedWidth = (ids) => {
         if (!ids.length) return 0;
         return ids.reduce((sum, id) => sum + (nodeSize(id).w || NODE_W), 0) + gapX * Math.max(0, ids.length - 1);
@@ -2619,7 +2963,7 @@
             }
             if (gaps.length) {
               const avgGap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
-              clusterGapY = Math.max(24, Math.min(96, Math.round(avgGap * 0.9)));
+              clusterGapY = Math.max(24, Math.min(96, Math.round(avgGap * 0.9))) * DATASOURCE_NEAR_LAYER_GAP_MULTIPLIER;
             }
           }
         }
@@ -2782,7 +3126,8 @@
         }
       }
 
-      const targetY = clampNodeY(dsTopY - Math.max(28, Math.round(avgLayerGap * 0.95)), NODE_H);
+      const datasourceNearLayerGapY = Math.max(28, Math.round(avgLayerGap * 0.95)) * DATASOURCE_NEAR_LAYER_GAP_MULTIPLIER;
+      const targetY = clampNodeY(dsTopY - datasourceNearLayerGapY, NODE_H);
       linkedNonDatasource.forEach((id) => {
         const pos = nodePos.get(id);
         if (!pos) return;
@@ -3077,7 +3422,7 @@
       { label: "[HCPR] CP", icon: "CompositeProvider.png" },
       { label: "[ELEM] BW Query", icon: "BW_Query.png" },
       { label: "[DEST] OpenHub目标", icon: "OpenHub.png" },
-      { label: "[TRAN] 转换有逻辑", icon: "transformation.png" }
+      { label: "[TRAN] 转换有逻辑", icon: "Transformation.png" }
     ];
 
     legendList.innerHTML = legendItems
@@ -3438,6 +3783,82 @@
     applyViewportTransform();
   }
 
+  function setupGraphSearch() {
+    if (!graphSearchRoot || !graphSearchToggle || !graphSearchInput) return;
+
+    graphSearchRoot.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+    });
+
+    graphSearchToggle.addEventListener("click", () => {
+      setGraphSearchOpenState(!graphSearchOpen, { focusInput: true });
+    });
+
+    graphSearchInput.addEventListener("input", () => {
+      if (!graphSearchOpen) {
+        graphSearchOpen = true;
+      }
+      syncGraphSearchWithRenderedNodes({ focusCurrent: true, preserveCurrent: false });
+    });
+
+    graphSearchInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        stepGraphSearch(event.shiftKey ? -1 : 1);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (String(graphSearchInput.value || "").trim()) {
+          clearGraphSearch({ clearInput: true });
+          graphSearchInput.focus();
+        } else {
+          setGraphSearchOpenState(false, { clearOnClose: false });
+          graphSearchToggle.focus();
+        }
+      }
+    });
+
+    graphSearchPrev?.addEventListener("click", () => {
+      stepGraphSearch(-1);
+    });
+
+    graphSearchNext?.addEventListener("click", () => {
+      stepGraphSearch(1);
+    });
+
+    graphSearchClear?.addEventListener("click", () => {
+      clearGraphSearch({ clearInput: true });
+      graphSearchInput.focus();
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && String(event.key || "").toLowerCase() === "f") {
+        event.preventDefault();
+        setGraphSearchOpenState(true, { focusInput: true });
+        return;
+      }
+
+      if (event.key === "Escape" && graphSearchOpen && document.activeElement !== graphSearchInput) {
+        setGraphSearchOpenState(false, { clearOnClose: false });
+      }
+    });
+
+    updateGraphSearchUi();
+  }
+
+  function setupLogicMarkerToggleButton() {
+    if (!logicMarkerToggleBtn) return;
+    updateLogicMarkerToggleButtonState();
+    applyLogicMarkerVisibility();
+    logicMarkerToggleBtn.addEventListener("click", () => {
+      logicMarkersVisible = !logicMarkersVisible;
+      updateLogicMarkerToggleButtonState();
+      applyLogicMarkerVisibility();
+      showFlowToast(logicMarkersVisible ? "已显示有逻辑转换" : "已隐藏有逻辑转换");
+    });
+  }
+
   function getDistance(a, b) {
     const dx = a.x - b.x;
     const dy = a.y - b.y;
@@ -3469,6 +3890,7 @@
       if (
         event.target.closest(".side-drawer")
         || event.target.closest(".mini-map-drawer")
+        || event.target.closest(".graph-search")
         || event.target.closest(".reset-view")
         || event.target.closest(".flow-title")
         || event.target.closest(".layout-spread-control")
@@ -3501,7 +3923,7 @@
     });
 
     flowCanvas.addEventListener("contextmenu", (event) => {
-      if (event.target.closest(".node")) return;
+      if (event.target.closest(".node, .edge-logic-marker")) return;
       event.preventDefault();
       hideNodeContextMenu();
     });
@@ -3751,6 +4173,8 @@
         setupMiniMapDrawer();
         setupLayoutSpreadControl();
         setupTextToggle();
+        setupGraphSearch();
+        setupLogicMarkerToggleButton();
         setupHiddenToggleButton();
         setupViewportInteraction();
         fitToView();

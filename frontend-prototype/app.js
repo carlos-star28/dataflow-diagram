@@ -88,6 +88,74 @@
   const importHeaderRowWrap = document.getElementById("importHeaderRowWrap");
   const importHeaderRowSelect = document.getElementById("importHeaderRowSelect");
   const importMeta = document.getElementById("importMeta");
+
+  function updatePasswordToggleButton(toggleButton, visible) {
+    if (!toggleButton) return;
+    const isVisible = !!visible;
+    toggleButton.setAttribute("aria-pressed", isVisible ? "true" : "false");
+    toggleButton.setAttribute("aria-label", isVisible ? "隐藏密码" : "显示密码");
+    toggleButton.setAttribute("title", isVisible ? "隐藏密码" : "显示密码");
+    toggleButton.classList.toggle("is-visible", isVisible);
+  }
+
+  function setPasswordInputVisible(inputEl, visible) {
+    if (!inputEl) return;
+    const isVisible = !!visible;
+    inputEl.setAttribute("type", isVisible ? "text" : "password");
+    const wrapper = inputEl.closest(".login-password-inline, .password-toggle-field");
+    const toggleButton = wrapper?.querySelector(".login-password-toggle, .password-toggle-btn") || null;
+    updatePasswordToggleButton(toggleButton, isVisible);
+  }
+
+  function resetPasswordInputs(...inputs) {
+    inputs.forEach((inputEl) => setPasswordInputVisible(inputEl, false));
+  }
+
+  function enhancePasswordInput(inputEl, options = {}) {
+    if (!inputEl || inputEl.dataset.passwordToggleReady === "1") return;
+
+    let wrapper = inputEl.closest(".login-password-inline, .password-toggle-field");
+    let toggleButton = null;
+
+    if (wrapper && wrapper.contains(inputEl)) {
+      wrapper.classList.add("password-toggle-field");
+      toggleButton = wrapper.querySelector(".login-password-toggle, .password-toggle-btn");
+    } else {
+      wrapper = document.createElement("div");
+      wrapper.className = "password-toggle-field";
+      inputEl.parentNode?.insertBefore(wrapper, inputEl);
+      wrapper.appendChild(inputEl);
+    }
+
+    if (!toggleButton) {
+      toggleButton = document.createElement("button");
+      toggleButton.type = "button";
+      toggleButton.className = "password-toggle-btn";
+      wrapper.appendChild(toggleButton);
+    }
+
+    toggleButton.classList.add("password-toggle-btn");
+    if (options.id) {
+      toggleButton.id = options.id;
+    }
+    if (!toggleButton.querySelector(".password-toggle-eye, .login-password-toggle-eye")) {
+      const eye = document.createElement("span");
+      eye.className = "password-toggle-eye";
+      eye.setAttribute("aria-hidden", "true");
+      toggleButton.replaceChildren(eye);
+    }
+
+    if (toggleButton.dataset.passwordToggleBound !== "1") {
+      toggleButton.addEventListener("click", () => {
+        const nextVisible = toggleButton.getAttribute("aria-pressed") !== "true";
+        setPasswordInputVisible(inputEl, nextVisible);
+      });
+      toggleButton.dataset.passwordToggleBound = "1";
+    }
+
+    inputEl.dataset.passwordToggleReady = "1";
+    setPasswordInputVisible(inputEl, false);
+  }
   const importProgressWrap = document.getElementById("importProgressWrap");
   const importProgressText = document.getElementById("importProgressText");
   const importProgressBar = document.getElementById("importProgressBar");
@@ -1549,10 +1617,7 @@
           currentUser = await authMe();
         });
         if (loginPassword) loginPassword.value = "";
-        if (loginShowPassword) {
-          loginShowPassword.checked = false;
-          loginPassword?.setAttribute("type", "password");
-        }
+        resetPasswordInputs(loginPassword);
         if (searchInput) searchInput.value = "";
         setSelectedStartContext();
         if (clearSearch) clearSearch.style.display = "none";
@@ -1578,6 +1643,10 @@
       loginSubmitBtn.addEventListener("click", submitLogin);
     }
 
+    [loginPassword, currentPasswordInput, newPasswordInput, newUserPasswordInput, adminResetUserPasswordInput].forEach((inputEl) => {
+      enhancePasswordInput(inputEl);
+    });
+
     [loginUsername, loginPassword].forEach((input) => {
       if (!input) return;
       input.addEventListener("keydown", (event) => {
@@ -1587,20 +1656,15 @@
       });
     });
 
-    if (loginShowPassword && loginPassword) {
-      loginShowPassword.addEventListener("change", () => {
-        loginPassword.setAttribute("type", loginShowPassword.checked ? "text" : "password");
-      });
+    if (loginPassword) {
+      enhancePasswordInput(loginPassword, { id: "loginShowPassword" });
     }
 
     if (loginCancelBtn) {
       loginCancelBtn.addEventListener("click", () => {
         if (loginUsername) loginUsername.value = "";
         if (loginPassword) loginPassword.value = "";
-        if (loginShowPassword) {
-          loginShowPassword.checked = false;
-          loginPassword?.setAttribute("type", "password");
-        }
+        resetPasswordInputs(loginPassword);
         setLoginError("");
         showLoginGate();
       });
@@ -1657,11 +1721,15 @@
         if (changePasswordModal) changePasswordModal.classList.remove("hidden");
         if (currentPasswordInput) currentPasswordInput.value = "";
         if (newPasswordInput) newPasswordInput.value = "";
+        resetPasswordInputs(currentPasswordInput, newPasswordInput);
       });
     }
 
     if (closeChangePasswordModal) {
-      closeChangePasswordModal.addEventListener("click", () => changePasswordModal?.classList.add("hidden"));
+      closeChangePasswordModal.addEventListener("click", () => {
+        resetPasswordInputs(currentPasswordInput, newPasswordInput);
+        changePasswordModal?.classList.add("hidden");
+      });
     }
 
     if (maxChangePasswordModal && changePasswordModalShell) {
@@ -1704,6 +1772,7 @@
             await authChangePassword(oldPass, newPass);
           });
           showToast("密码修改成功");
+          resetPasswordInputs(currentPasswordInput, newPasswordInput);
           changePasswordModal?.classList.add("hidden");
         } catch (err) {
           showToast(`修改失败：${err?.message || "未知错误"}`, "error");
@@ -1757,6 +1826,7 @@
     }
 
     const closeCreateUserModalPanel = () => {
+      resetPasswordInputs(newUserPasswordInput);
       createUserModal?.classList.add("hidden");
     };
 
@@ -1764,6 +1834,7 @@
       adminResetUserModal?.classList.add("hidden");
       selectedAdminResetUsername = "";
       if (adminResetUserPasswordInput) adminResetUserPasswordInput.value = "";
+      resetPasswordInputs(adminResetUserPasswordInput);
     };
 
     if (closeCreateUserModal) {
@@ -1880,6 +1951,7 @@
         if (newUserNameInput) newUserNameInput.value = "";
         if (newUserPasswordInput) newUserPasswordInput.value = "";
         if (newUserRoleSelect) newUserRoleSelect.value = "user";
+        resetPasswordInputs(newUserPasswordInput);
         createUserModal?.classList.remove("hidden");
       });
     }
@@ -1899,6 +1971,7 @@
           });
           if (newUserNameInput) newUserNameInput.value = "";
           if (newUserPasswordInput) newUserPasswordInput.value = "";
+          resetPasswordInputs(newUserPasswordInput);
           closeCreateUserModalPanel();
           await withModalLoading(userAdminModal, "正在刷新列表...", async () => {
             await refreshUserAdminTable();
@@ -1922,6 +1995,7 @@
           if (adminResetUserNameInput) adminResetUserNameInput.value = username;
           if (adminResetUserRoleInput) adminResetUserRoleInput.value = role;
           if (adminResetUserPasswordInput) adminResetUserPasswordInput.value = "";
+          resetPasswordInputs(adminResetUserPasswordInput);
           adminResetUserModal?.classList.remove("hidden");
           return;
         }

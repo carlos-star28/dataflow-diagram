@@ -818,6 +818,68 @@ def normalize_hidden_sourcesys(raw: str | None) -> str:
     return txt if len(txt) >= 3 else ""
 
 
+def row_has_transformation_logic(start_routine: object, end_routine: object, expert: object) -> bool:
+    return any(str(value or "").strip() for value in (start_routine, end_routine, expert))
+
+
+def extract_transformation_logic_details(start_routine: object, end_routine: object, expert: object) -> List[Dict[str, str]]:
+    details: List[Dict[str, str]] = []
+    for kind, value in (("start", start_routine), ("end", end_routine), ("expert", expert)):
+        txt = str(value or "").strip()
+        if txt:
+            details.append({"kind": kind, "id": txt})
+    return details
+
+
+def append_or_update_edge(
+    edges: List[Dict[str, object]],
+    edge_by_key: Dict[Tuple[str, str, str, str], Dict[str, object]],
+    source_name: str,
+    target_name: str,
+    source_type: str,
+    target_type: str,
+    tran_id: object = None,
+    start_routine: object = None,
+    end_routine: object = None,
+    expert: object = None,
+) -> None:
+    edge_key = (source_name, target_name, source_type, target_type)
+    logic_details = extract_transformation_logic_details(start_routine, end_routine, expert)
+    tran_id_text = str(tran_id or "").strip()
+    existing = edge_by_key.get(edge_key)
+    if existing is None:
+        edge = {
+            "source": source_name,
+            "target": target_name,
+            "source_type": source_type,
+            "target_type": target_type,
+            "has_logic": bool(logic_details),
+            "logic_details": logic_details,
+            "logic_ids": [detail["id"] for detail in logic_details],
+            "tran_ids": [tran_id_text] if tran_id_text else [],
+        }
+        edges.append(edge)
+        edge_by_key[edge_key] = edge
+        return
+
+    if tran_id_text:
+        existing_tran_ids = existing.setdefault("tran_ids", [])
+        if tran_id_text not in existing_tran_ids:
+            existing_tran_ids.append(tran_id_text)
+
+    if logic_details:
+        existing["has_logic"] = True
+        existing_details = existing.setdefault("logic_details", [])
+        existing_keys = {(str(detail.get("kind") or ""), str(detail.get("id") or "")) for detail in existing_details}
+        for detail in logic_details:
+            detail_key = (str(detail.get("kind") or ""), str(detail.get("id") or ""))
+            if detail_key in existing_keys:
+                continue
+            existing_details.append(detail)
+            existing_keys.add(detail_key)
+        existing["logic_ids"] = [detail.get("id", "") for detail in existing_details if str(detail.get("id") or "").strip()]
+
+
 def _build_graph_engine_by_source(start_name: str, max_nodes: int = 2000, max_edges: int = 5000) -> Dict[str, object]:
     """Wave expansion by SOURCENAME -> TARGETNAME with row-level deduplication."""
     seed = start_name.strip()
@@ -834,12 +896,13 @@ def _build_graph_engine_by_source(start_name: str, max_nodes: int = 2000, max_ed
     node_levels: Dict[str, int] = {seed: 0}
     node_object_names: Dict[str, str] = {}
     edge_seen: Set[Tuple[str, str, str, str]] = set()
-    edges: List[Dict[str, str]] = []
+    edge_by_key: Dict[Tuple[str, str, str, str], Dict[str, object]] = {}
+    edges: List[Dict[str, object]] = []
 
     try:
         cur.execute(
             """
-            SELECT SOURCENAME, TARGETNAME, SOURCETYPE, TARGETTYPE
+            SELECT SOURCENAME, TARGETNAME, SOURCETYPE, TARGETTYPE, TRANID, STARTROUTINE, ENDROUTINE, EXPERT
             FROM rstran
             WHERE SOURCENAME IS NOT NULL AND TARGETNAME IS NOT NULL
             ORDER BY TRANID
@@ -848,13 +911,13 @@ def _build_graph_engine_by_source(start_name: str, max_nodes: int = 2000, max_ed
         all_rows = cur.fetchall()
 
         source_to_indices: Dict[str, List[int]] = {}
-        normalized_rows: List[Tuple[str, str, str, str]] = []
+        normalized_rows: List[Tuple[str, str, str, str, object, object, object, object]] = []
         for idx, row in enumerate(all_rows):
             source_name = str(row[0] or "").strip()
             target_name = str(row[1] or "").strip()
             source_type = normalize_type_code(row[2])
             target_type = normalize_type_code(row[3])
-            normalized_rows.append((source_name, target_name, source_type, target_type))
+            normalized_rows.append((source_name, target_name, source_type, target_type, row[4], row[5], row[6], row[7]))
             if not source_name:
                 continue
             source_to_indices.setdefault(source_name, []).append(idx)
@@ -868,20 +931,37 @@ def _build_graph_engine_by_source(start_name: str, max_nodes: int = 2000, max_ed
                         continue
                     visited_row_indices.add(idx)
 
-                    source_name, target_name, source_type, target_type = normalized_rows[idx]
+                    source_name, target_name, source_type, target_type, tran_id, start_routine, end_routine, expert = normalized_rows[idx]
                     if not source_name or not target_name:
                         continue
 
                     edge_key = (source_name, target_name, source_type, target_type)
                     if edge_key not in edge_seen:
                         edge_seen.add(edge_key)
-                        edges.append(
-                            {
-                                "source": source_name,
-                                "target": target_name,
-                                "source_type": source_type,
-                                "target_type": target_type,
-                            }
+                        append_or_update_edge(
+                            edges,
+                            edge_by_key,
+                            source_name,
+                            target_name,
+                            source_type,
+                            target_type,
+                            tran_id,
+                            start_routine,
+                            end_routine,
+                            expert,
+                        )
+                    else:
+                        append_or_update_edge(
+                            edges,
+                            edge_by_key,
+                            source_name,
+                            target_name,
+                            source_type,
+                            target_type,
+                            tran_id,
+                            start_routine,
+                            end_routine,
+                            expert,
                         )
 
                     if source_name not in node_types or node_types[source_name] == "UNKNOWN":
@@ -999,12 +1079,13 @@ def build_graph_both(start_name: str, max_nodes: int = 2000, max_edges: int = 50
     node_levels: Dict[str, int] = {seed: 0}
     node_object_names: Dict[str, str] = {}
     edge_seen: Set[Tuple[str, str, str, str]] = set()
-    edges: List[Dict[str, str]] = []
+    edge_by_key: Dict[Tuple[str, str, str, str], Dict[str, object]] = {}
+    edges: List[Dict[str, object]] = []
 
     try:
         cur.execute(
             """
-            SELECT SOURCENAME, TARGETNAME, SOURCETYPE, TARGETTYPE
+            SELECT SOURCENAME, TARGETNAME, SOURCETYPE, TARGETTYPE, TRANID, STARTROUTINE, ENDROUTINE, EXPERT
             FROM rstran
             WHERE SOURCENAME IS NOT NULL AND TARGETNAME IS NOT NULL
             ORDER BY TRANID
@@ -1014,14 +1095,14 @@ def build_graph_both(start_name: str, max_nodes: int = 2000, max_edges: int = 50
 
         source_to_indices: Dict[str, List[int]] = {}
         target_to_indices: Dict[str, List[int]] = {}
-        normalized_rows: List[Tuple[str, str, str, str]] = []
+        normalized_rows: List[Tuple[str, str, str, str, object, object, object, object]] = []
 
         for idx, row in enumerate(all_rows):
             source_name = str(row[0] or "").strip()
             target_name = str(row[1] or "").strip()
             source_type = normalize_type_code(row[2])
             target_type = normalize_type_code(row[3])
-            normalized_rows.append((source_name, target_name, source_type, target_type))
+            normalized_rows.append((source_name, target_name, source_type, target_type, row[4], row[5], row[6], row[7]))
             if source_name:
                 source_to_indices.setdefault(source_name, []).append(idx)
             if target_name:
@@ -1038,21 +1119,25 @@ def build_graph_both(start_name: str, max_nodes: int = 2000, max_edges: int = 50
                         continue
                     visited_row_indices.add(idx)
 
-                    source_name, target_name, source_type, target_type = normalized_rows[idx]
+                    source_name, target_name, source_type, target_type, tran_id, start_routine, end_routine, expert = normalized_rows[idx]
                     if not source_name or not target_name:
                         continue
 
                     edge_key = (source_name, target_name, source_type, target_type)
                     if edge_key not in edge_seen:
                         edge_seen.add(edge_key)
-                        edges.append(
-                            {
-                                "source": source_name,
-                                "target": target_name,
-                                "source_type": source_type,
-                                "target_type": target_type,
-                            }
-                        )
+                    append_or_update_edge(
+                        edges,
+                        edge_by_key,
+                        source_name,
+                        target_name,
+                        source_type,
+                        target_type,
+                        tran_id,
+                        start_routine,
+                        end_routine,
+                        expert,
+                    )
 
                     if source_name not in node_types or node_types[source_name] == "UNKNOWN":
                         node_types[source_name] = source_type
@@ -1087,21 +1172,25 @@ def build_graph_both(start_name: str, max_nodes: int = 2000, max_edges: int = 50
                         continue
                     visited_row_indices.add(idx)
 
-                    source_name, target_name, source_type, target_type = normalized_rows[idx]
+                    source_name, target_name, source_type, target_type, tran_id, start_routine, end_routine, expert = normalized_rows[idx]
                     if not source_name or not target_name:
                         continue
 
                     edge_key = (source_name, target_name, source_type, target_type)
                     if edge_key not in edge_seen:
                         edge_seen.add(edge_key)
-                        edges.append(
-                            {
-                                "source": source_name,
-                                "target": target_name,
-                                "source_type": source_type,
-                                "target_type": target_type,
-                            }
-                        )
+                    append_or_update_edge(
+                        edges,
+                        edge_by_key,
+                        source_name,
+                        target_name,
+                        source_type,
+                        target_type,
+                        tran_id,
+                        start_routine,
+                        end_routine,
+                        expert,
+                    )
 
                     if source_name not in node_types or node_types[source_name] == "UNKNOWN":
                         node_types[source_name] = source_type
@@ -1207,12 +1296,12 @@ def build_graph_full(start_name: str, max_nodes: int = 2000, max_edges: int = 50
 
     node_types: Dict[str, str] = {seed: "UNKNOWN"}
     node_object_names: Dict[str, str] = {}
-    edges: List[Dict[str, str]] = []
+    edges: List[Dict[str, object]] = []
 
     try:
         cur.execute(
             """
-            SELECT SOURCENAME, TARGETNAME, SOURCETYPE, TARGETTYPE
+            SELECT SOURCENAME, TARGETNAME, SOURCETYPE, TARGETTYPE, TRANID, STARTROUTINE, ENDROUTINE, EXPERT
             FROM rstran
             WHERE SOURCENAME IS NOT NULL AND TARGETNAME IS NOT NULL
             ORDER BY TRANID
@@ -1220,7 +1309,7 @@ def build_graph_full(start_name: str, max_nodes: int = 2000, max_edges: int = 50
         )
         all_rows = cur.fetchall()
 
-        normalized_rows: List[Tuple[str, str, str, str]] = []
+        normalized_rows: List[Tuple[str, str, str, str, object, object, object, object]] = []
         undirected_adj_all: Dict[str, Set[str]] = {}
 
         for row in all_rows:
@@ -1231,7 +1320,7 @@ def build_graph_full(start_name: str, max_nodes: int = 2000, max_edges: int = 50
             if not source_name or not target_name:
                 continue
 
-            normalized_rows.append((source_name, target_name, source_type, target_type))
+            normalized_rows.append((source_name, target_name, source_type, target_type, row[4], row[5], row[6], row[7]))
             undirected_adj_all.setdefault(source_name, set()).add(target_name)
             undirected_adj_all.setdefault(target_name, set()).add(source_name)
 
@@ -1259,21 +1348,38 @@ def build_graph_full(start_name: str, max_nodes: int = 2000, max_edges: int = 50
 
         # Build induced full subgraph over the closure union.
         edge_seen: Set[Tuple[str, str, str, str]] = set()
+        edge_by_key: Dict[Tuple[str, str, str, str], Dict[str, object]] = {}
         undirected_adj: Dict[str, Set[str]] = {}
-        for source_name, target_name, source_type, target_type in normalized_rows:
+        for source_name, target_name, source_type, target_type, tran_id, start_routine, end_routine, expert in normalized_rows:
             if source_name not in all_nodes or target_name not in all_nodes:
                 continue
             key = (source_name, target_name, source_type, target_type)
             if key in edge_seen:
+                append_or_update_edge(
+                    edges,
+                    edge_by_key,
+                    source_name,
+                    target_name,
+                    source_type,
+                    target_type,
+                    tran_id,
+                    start_routine,
+                    end_routine,
+                    expert,
+                )
                 continue
             edge_seen.add(key)
-            edges.append(
-                {
-                    "source": source_name,
-                    "target": target_name,
-                    "source_type": source_type,
-                    "target_type": target_type,
-                }
+            append_or_update_edge(
+                edges,
+                edge_by_key,
+                source_name,
+                target_name,
+                source_type,
+                target_type,
+                tran_id,
+                start_routine,
+                end_routine,
+                expert,
             )
             undirected_adj.setdefault(source_name, set()).add(target_name)
             undirected_adj.setdefault(target_name, set()).add(source_name)
@@ -1369,12 +1475,13 @@ def _build_graph_engine_by_target(start_name: str, max_nodes: int = 2000, max_ed
     node_levels: Dict[str, int] = {seed: 0}
     node_object_names: Dict[str, str] = {}
     edge_seen: Set[Tuple[str, str, str, str]] = set()
-    edges: List[Dict[str, str]] = []
+    edge_by_key: Dict[Tuple[str, str, str, str], Dict[str, object]] = {}
+    edges: List[Dict[str, object]] = []
 
     try:
         cur.execute(
             """
-            SELECT SOURCENAME, TARGETNAME, SOURCETYPE, TARGETTYPE
+            SELECT SOURCENAME, TARGETNAME, SOURCETYPE, TARGETTYPE, TRANID, STARTROUTINE, ENDROUTINE, EXPERT
             FROM rstran
             WHERE SOURCENAME IS NOT NULL AND TARGETNAME IS NOT NULL
             ORDER BY TRANID
@@ -1383,13 +1490,13 @@ def _build_graph_engine_by_target(start_name: str, max_nodes: int = 2000, max_ed
         all_rows = cur.fetchall()
 
         target_to_indices: Dict[str, List[int]] = {}
-        normalized_rows: List[Tuple[str, str, str, str]] = []
+        normalized_rows: List[Tuple[str, str, str, str, object, object, object, object]] = []
         for idx, row in enumerate(all_rows):
             source_name = str(row[0] or "").strip()
             target_name = str(row[1] or "").strip()
             source_type = normalize_type_code(row[2])
             target_type = normalize_type_code(row[3])
-            normalized_rows.append((source_name, target_name, source_type, target_type))
+            normalized_rows.append((source_name, target_name, source_type, target_type, row[4], row[5], row[6], row[7]))
             if not target_name:
                 continue
             target_to_indices.setdefault(target_name, []).append(idx)
@@ -1403,21 +1510,25 @@ def _build_graph_engine_by_target(start_name: str, max_nodes: int = 2000, max_ed
                         continue
                     visited_row_indices.add(idx)
 
-                    source_name, target_name, source_type, target_type = normalized_rows[idx]
+                    source_name, target_name, source_type, target_type, tran_id, start_routine, end_routine, expert = normalized_rows[idx]
                     if not source_name or not target_name:
                         continue
 
                     edge_key = (source_name, target_name, source_type, target_type)
                     if edge_key not in edge_seen:
                         edge_seen.add(edge_key)
-                        edges.append(
-                            {
-                                "source": source_name,
-                                "target": target_name,
-                                "source_type": source_type,
-                                "target_type": target_type,
-                            }
-                        )
+                    append_or_update_edge(
+                        edges,
+                        edge_by_key,
+                        source_name,
+                        target_name,
+                        source_type,
+                        target_type,
+                        tran_id,
+                        start_routine,
+                        end_routine,
+                        expert,
+                    )
 
                     if source_name not in node_types or node_types[source_name] == "UNKNOWN":
                         node_types[source_name] = source_type

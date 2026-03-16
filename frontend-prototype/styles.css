@@ -742,24 +742,92 @@ body:not(.flow-only) .layout.centered {
   padding: 0 10px;
 }
 
-.login-password-inline {
+.login-password-inline,
+.password-toggle-field {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
 }
 
 .login-password-inline input[type="password"],
-.login-password-inline input[type="text"] {
+.login-password-inline input[type="text"],
+.password-toggle-field input[type="password"],
+.password-toggle-field input[type="text"] {
   flex: 1;
+  width: 100%;
+  padding-right: 42px;
 }
 
-.login-password-toggle {
+.login-password-toggle,
+.password-toggle-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  color: var(--text-soft);
-  white-space: nowrap;
+  justify-content: center;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(226, 236, 252, 0.78);
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.login-password-toggle:hover,
+.password-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(239, 246, 255, 0.96);
+}
+
+.login-password-toggle:focus-visible,
+.password-toggle-btn:focus-visible {
+  outline: 2px solid rgba(120, 190, 255, 0.72);
+  outline-offset: 2px;
+}
+
+.login-password-toggle-eye,
+.password-toggle-eye {
+  position: relative;
+  width: 17px;
+  height: 11px;
+  border: 1.8px solid currentColor;
+  border-radius: 100% / 75%;
+}
+
+.login-password-toggle-eye::before,
+.password-toggle-eye::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  transform: translate(-50%, -50%);
+}
+
+.login-password-toggle-eye::after,
+.password-toggle-eye::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 1.8px;
+  border-radius: 999px;
+  background: currentColor;
+  transform: translate(-50%, -50%) rotate(-32deg);
+  opacity: 0.92;
+}
+
+.login-password-toggle.is-visible .login-password-toggle-eye::after,
+.password-toggle-btn.is-visible .password-toggle-eye::after {
+  opacity: 0;
 }
 
 .login-shell.has-error .login-form-row input {
@@ -1466,15 +1534,15 @@ body[data-dropdown-mode="push"] .dropdown {
 
 .mini-map-drawer {
   position: absolute;
-  left: 50%;
-  bottom: 4px;
+  left: 12px;
+  bottom: 12px;
   z-index: 140;
-  transform: translateX(-50%);
+  transform: none;
   transition: transform 220ms ease;
 }
 
 .mini-map-drawer.collapsed {
-  transform: translateX(-50%) translateY(calc(100% - 11px));
+  transform: translateY(calc(100% - 11px));
 }
 
 .login-error-text {
@@ -1666,6 +1734,44 @@ body[data-dropdown-mode="push"] .dropdown {
   transition: stroke 180ms ease, opacity 180ms ease, filter 180ms ease;
 }
 
+.flow-edge-logic-marker {
+  pointer-events: none;
+}
+
+.flow-edge-logic-bg {
+  fill: rgba(10, 18, 30, 0.88);
+  stroke: rgba(255, 255, 255, 0.24);
+  stroke-width: 1;
+}
+
+.flow-edge-logic-icon {
+  filter: drop-shadow(0 1px 3px rgba(6, 12, 22, 0.55));
+}
+
+.edge-logic-marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  z-index: 2;
+  cursor: pointer;
+}
+
+.flow-canvas.logic-markers-hidden .edge-logic-marker {
+  display: none;
+}
+
+.edge-logic-marker-icon {
+  position: absolute;
+  inset: 0;
+  background: url("./Assets/Icons/Transformation.png") center / contain no-repeat;
+  filter: drop-shadow(0 0 3px rgba(72, 214, 122, 0.35));
+  pointer-events: none;
+}
+
 .flow-edge.is-flowing {
   stroke: rgba(255, 102, 102, 0.98);
   stroke-width: 2;
@@ -1716,6 +1822,18 @@ body[data-dropdown-mode="push"] .dropdown {
   font-weight: 400;
   border-color: rgba(198, 206, 218, 0.98);
   box-shadow: 0 0 0 3px rgba(182, 191, 204, 0.52), 0 8px 22px rgba(0, 0, 0, 0.25);
+}
+
+.node.search-match {
+  outline: 2px solid rgba(255, 92, 92, 0.96);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(255, 92, 92, 0.18), 0 8px 22px rgba(0, 0, 0, 0.25);
+}
+
+.node.search-current {
+  z-index: 4;
+  outline-color: rgba(255, 64, 64, 1);
+  box-shadow: 0 0 0 4px rgba(255, 64, 64, 0.24), 0 0 26px rgba(255, 64, 64, 0.48), 0 8px 22px rgba(0, 0, 0, 0.25);
 }
 
 .node-extra-text {
@@ -2108,11 +2226,82 @@ body[data-dropdown-mode="push"] .dropdown {
 }
 
 .hidden-toggle-btn {
+  position: static;
+  z-index: auto;
+  transform: none;
+}
+
+.flow-corner-tools {
   position: absolute;
   right: 12px;
   bottom: 12px;
   z-index: 5;
-  transform: translateX(-33.333%);
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.graph-search {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.graph-search-panel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(8, 18, 32, 0.82);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 12px 30px rgba(5, 13, 26, 0.3);
+}
+
+.graph-search.collapsed .graph-search-panel {
+  display: none;
+}
+
+.graph-search-input {
+  width: min(280px, calc(100vw - 240px));
+  min-width: 180px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: #eff6ff;
+  font-size: 12px;
+  outline: none;
+}
+
+.graph-search-input::placeholder {
+  color: rgba(222, 235, 255, 0.56);
+}
+
+.graph-search-input:focus {
+  border-color: rgba(120, 190, 255, 0.72);
+  box-shadow: 0 0 0 2px rgba(120, 190, 255, 0.18);
+}
+
+.graph-search-count {
+  min-width: 42px;
+  text-align: center;
+  font-size: 11px;
+  color: rgba(236, 244, 255, 0.86);
+}
+
+.graph-search-nav,
+.graph-search-clear,
+.graph-search-toggle,
+.logic-marker-toggle {
+  white-space: nowrap;
+}
+
+.graph-search-nav:disabled,
+.graph-search-clear:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .flow-toast {
@@ -2225,6 +2414,25 @@ body.flow-only .flow-stage {
 body.flow-only .flow-canvas {
   margin: 0;
   min-height: 0;
+}
+
+@media (max-width: 960px) {
+  .flow-corner-tools {
+    left: 10px;
+    right: 10px;
+    gap: 8px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .graph-search {
+    margin-left: auto;
+  }
+
+  .graph-search-input {
+    width: min(240px, calc(100vw - 150px));
+    min-width: 150px;
+  }
 }
 
 body.flow-only .flow-stage.glass-panel {
